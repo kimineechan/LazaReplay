@@ -11,8 +11,6 @@
 //	lazareplay-check colour    convert known colours on the chip and check them
 //	lazareplay-check capture   capture the main screen for three seconds
 //	lazareplay-check pattern   show the test card in a window
-//	lazareplay-check encode    feed generated frames through an encoder
-//	lazareplay-check codecs    try to start every hardware encoder
 //	lazareplay-check record    run the recorder and save a clip
 //	lazareplay-check verify    play a saved clip back and print what it holds
 //
@@ -53,10 +51,6 @@ func main() {
 		capture()
 	case "pattern":
 		pattern()
-	case "encode":
-		encode()
-	case "codecs":
-		codecs()
 	case "record":
 		record()
 	case "verify":
@@ -230,22 +224,6 @@ func capture() {
 		targets = append(targets, t)
 	}
 	wait := option("wait", 0) // milliseconds to wait for a frame at each tick
-	var encoder *mf.Encoder
-	if option("encoder", 0) == 1 {
-		config := mf.Config{Width: dup.Width, Height: dup.Height, Rate: 60, Bitrate: 10_000_000, Peak: 15_000_000, KeyInterval: 120}
-		for _, codec := range encoders(device) {
-			if encoder, err = codec.Open(device.Object, config); err == nil {
-				break
-			}
-		}
-		if encoder == nil {
-			fail(err)
-		}
-		defer encoder.Close()
-		fmt.Println("encoder open:", encoder.Name)
-	}
-	submit := option("submit", 0) == 1
-	outputs := 0
 	ticker := clock.NewTicker(clock.Second / 60)
 	defer ticker.Close()
 	var frames, quiet, direct, pointer, skipped, accumulated int
@@ -282,19 +260,8 @@ func capture() {
 		} else {
 			direct++
 		}
-		if encoder != nil && submit {
-			encoder.Collect(func([]byte, int64) { outputs++ })
-			if ok, _ := encoder.Accepting(); ok && target.Idle() {
-				if err := encoder.Submit(target.Texture, tick, clock.Second/60, frames == 1); err != nil {
-					fmt.Println("submit:", err)
-				}
-			}
-		}
 		device.Flush()
 		work = append(work, clock.Now()-began)
-	}
-	if encoder != nil {
-		fmt.Println("encoder outputs:", outputs)
 	}
 	fmt.Printf("180 ticks waiting up to %d ms: %d frames, %d ticks with nothing new, %d ticks skipped\n", wait, frames, quiet, skipped)
 	fmt.Printf("screen updates folded into those frames: %d; time spent waiting: median %.2f ms, worst %.2f ms\n", accumulated, ms(median(waited)), ms(largest(waited)))

@@ -71,11 +71,29 @@ Conversion by drawing took 0.009 ms per picture against 0.37 to 0.42 ms for the 
 
 ## A longer run
 
-SOAK
+The finished app was left running for seven minutes with the window hidden and the default five-minute loop, recording the real screen at 1920 by 1080 and 60 a second with sound, while the computer was in ordinary use.
+
+| Time | Processor, share of one core | Memory |
+| --- | --- | --- |
+| 30 s | 6.0% | 170 MB |
+| 2 min | 6.2% | 252 MB |
+| 4 min | 6.6% | 360 MB |
+| 5 min | 6.8% | 420 MB |
+| 6 min | 7.1% | 448 MB |
+| 7 min | 6.4% | 457 MB |
+
+Memory rose as the loop filled and levelled off once it was full. The number of threads and handles did not grow. The clip saved at the end was 274 MB and 5 minutes 1.9 seconds long, with 17,837 pictures, the longest gap between two of them 67 ms, and a sound track 41 ms shorter than the pictures.
+
+To separate a leak from a loop that is merely filling, the generated picture, which costs the same every second, was recorded for 150 seconds with a loop of 20 seconds. From 75 seconds to the end the memory of the process stayed between 176.0 and 176.1 MB, and the number of handles did not move. All 8,988 pictures were recorded without one waiting for the encoder, and the clip saved at the end held the last 20.7 seconds, every frame present and in order.
+
+Two failures were provoked on purpose, since real hardware seldom provides them:
+
+- The generated source was made to fail every 90 pictures in the way a monitor does when Windows takes it away for the lock screen. Recording carried on without a gap longer than two ticks.
+- The hardware encoder was made to report a failure after 40 pictures. After the second failure the recorder passed it over, started the software encoder and carried on; the clip from that point played back with every frame in order.
 
 ## Automated tests
 
-37 tests run on every push, on Linux with the race detector and on Windows.
+37 tests run on every push: all of them on Windows, and those that do not need Windows on Linux as well, with the race detector.
 
 | Package | What is tested |
 | --- | --- |

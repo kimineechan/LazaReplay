@@ -45,9 +45,6 @@ var (
 	PixelAspectRatio = com.ID("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6")
 	Profile          = com.ID("ad76a80b-2d5c-4e0b-b375-64e520137036")
 	SequenceHeader   = com.ID("3c036de7-3ad0-4c9e-9216-ee6d6ac21cb3")
-	NominalRange     = com.ID("c21b8ee5-b956-4071-8daf-325edf5cab11")
-	YUVMatrix        = com.ID("3e23d450-2c75-4d25-a00e-b91670d12327")
-	UserData         = com.ID("b6bc765f-4c3b-40a4-bd51-2535b66fe09d")
 	AudioChannels    = com.ID("37e48bf5-645e-4c5b-89de-ada9e29b696a")
 	AudioSampleRate  = com.ID("5faeeae7-0290-4c31-9e8a-c534f68d9dba")
 	AudioBits        = com.ID("f2deb57f-40fa-4764-aa33-ed4f2d1ff669")
@@ -55,25 +52,20 @@ var (
 	AudioBlockAlign  = com.ID("322de230-9eeb-43bd-ab7a-ff412251541d")
 	AACPayloadType   = com.ID("bfbabe79-7434-4d1c-94f0-72a3b9e17188")
 	AACProfileLevel  = com.ID("7632f0e6-9538-4d61-acda-ea29c8c14456")
-	CleanPoint       = com.ID("9cdf01d8-a0f0-43ba-b077-eaa06cbd728a")
 	AsyncUnlock      = com.ID("e5666d6b-3422-4eb6-a421-da7db1f8e207")
 	Async            = com.ID("f81a699a-649a-497d-8c73-29f8fed6ad7a")
 	D3D11Aware       = com.ID("206b4fc8-fcf9-4c51-afe3-9764369e33a0")
 	LowLatency       = com.ID("9c27891a-ed7a-40e1-88e8-b22727a024ee")
 	FriendlyName     = com.ID("314ffbae-5b41-4c95-9c19-4e7d586face3")
-	HardwareURL      = com.ID("2fb866ac-b078-4942-ab6c-003d05cda674")
 	EnumAdapterLUID  = com.ID("1d39518c-e220-4da8-a07f-ba172552d6b1")
 
 	TypeVideo = com.ID("73646976-0000-0010-8000-00aa00389b71")
 	TypeAudio = com.ID("73647561-0000-0010-8000-00aa00389b71")
 
-	FormatH264  = com.Format(com.FourCC("H264"))
-	FormatNV12  = com.Format(com.FourCC("NV12"))
-	FormatRGB32 = com.Format(22)
-	FormatARGB  = com.Format(21)
-	FormatPCM   = com.Format(1)
-	FormatFloat = com.Format(3)
-	FormatAAC   = com.Format(0x1610)
+	FormatH264 = com.Format(com.FourCC("H264"))
+	FormatNV12 = com.Format(com.FourCC("NV12"))
+	FormatPCM  = com.Format(1)
+	FormatAAC  = com.Format(0x1610)
 
 	hardwareVendor       = com.ID("3aecb0cc-035b-4bcc-8185-2b8d551ef3af")
 	categoryVideoEncoder = com.ID("f79eac7d-e545-4387-bdee-d647d7bde42a")
@@ -134,10 +126,6 @@ func (a Attributes) SetBlob(key *com.GUID, data []byte) error {
 	return com.Check("SetBlob", com.Call(a.P, 26, uintptr(unsafe.Pointer(key)), uintptr(unsafe.Pointer(&data[0])), uintptr(len(data))))
 }
 
-func (a Attributes) SetUnknown(key *com.GUID, object unsafe.Pointer) error {
-	return com.Check("SetUnknown", com.Call(a.P, 27, uintptr(unsafe.Pointer(key)), uintptr(object)))
-}
-
 func (a Attributes) UINT32(key *com.GUID) (uint32, bool) {
 	var v uint32
 	hr := com.Call(a.P, 7, uintptr(unsafe.Pointer(key)), uintptr(unsafe.Pointer(&v)))
@@ -191,54 +179,6 @@ type Codec struct {
 }
 
 func (c *Codec) Release() { c.activate.Release() }
-
-// Activate creates the encoder object without configuring it.
-func (c *Codec) Activate(transform *unsafe.Pointer) error {
-	iid := com.ID("bf94c121-5b05-4e6f-8000-ba598961414d")
-	return com.Check("ActivateObject", com.Call(c.activate.P, 33, uintptr(unsafe.Pointer(&iid)), uintptr(unsafe.Pointer(transform))))
-}
-
-// Class returns the COM class of the encoder.
-func (c *Codec) Class() (com.GUID, bool) {
-	key := com.ID("6821c42b-65a4-4e82-99bc-9a88205ecd0c")
-	return c.activate.GUID(&key)
-}
-
-// Describe lists the attributes Windows keeps about the encoder.
-func (c *Codec) Describe() []string {
-	var count uint32
-	com.Call(c.activate.P, 30, uintptr(unsafe.Pointer(&count)))
-	var lines []string
-	for i := uint32(0); i < count; i++ {
-		var key com.GUID
-		var value [24]byte
-		if int32(com.Call(c.activate.P, 31, uintptr(i), uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&value)))) < 0 {
-			continue
-		}
-		kind := *(*uint16)(unsafe.Pointer(&value[0]))
-		raw := *(*uint64)(unsafe.Pointer(&value[8]))
-		text := ""
-		switch kind {
-		case 19:
-			text = fmt.Sprintf("%d", uint32(raw))
-		case 21:
-			text = fmt.Sprintf("0x%X", raw)
-		case 31:
-			text = c.activate.String(&key)
-		case 72:
-			if g, ok := c.activate.GUID(&key); ok {
-				text = fmt.Sprintf("{%08x-%04x-%04x-%x}", g.Data1, g.Data2, g.Data3, g.Data4)
-			}
-		default:
-			text = fmt.Sprintf("kind %d, %d bytes", kind, len(c.activate.Blob(&key)))
-		}
-		propVariantClear.Call(uintptr(unsafe.Pointer(&value)))
-		lines = append(lines, fmt.Sprintf("{%08x-%04x-%04x-%x} = %s", key.Data1, key.Data2, key.Data3, key.Data4, text))
-	}
-	return lines
-}
-
-var propVariantClear = syscall.NewLazyDLL("ole32.dll").NewProc("PropVariantClear")
 
 // VideoEncoders lists the H.264 encoders. With an adapter ID it returns the
 // hardware encoders of that graphics adapter, whose maker is given by its
