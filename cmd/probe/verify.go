@@ -134,6 +134,8 @@ func verify() {
 	}
 	var samples, peak int
 	var clicks, peaks []int64
+	var toneSin, toneCos, toneAll float64
+	tonePhase := 0
 	loudest := 0
 	var energy float64
 	var first, last int64 = -1, 0
@@ -151,6 +153,13 @@ func verify() {
 		last = at
 		for i := 0; i+1 < len(data); i += 2 {
 			v := int(int16(uint16(data[i]) | uint16(data[i+1])<<8))
+			if i/2%max(channels, 1) == 0 { // follow a 1000 Hz tone on the first channel
+				angle := 2 * math.Pi * 1000 * float64(tonePhase) / float64(max(rate, 1))
+				toneSin += float64(v) * math.Sin(angle)
+				toneCos += float64(v) * math.Cos(angle)
+				toneAll += float64(v) * float64(v)
+				tonePhase++
+			}
 			energy += float64(v) * float64(v)
 			if v < 0 {
 				v = -v
@@ -177,6 +186,11 @@ func verify() {
 	frames := samples / max(channels, 1)
 	fmt.Printf("sound: %d Hz, %d channels, %.3f s, starts at %.1f ms, last block at %.3f s, peak %d of 32767, average level %.1f\n",
 		rate, channels, float64(frames)/float64(max(rate, 1)), ms(first), float64(last)/1e7, peak, math.Sqrt(energy/float64(max(samples, 1))))
+	if toneAll > 0 {
+		// How much of the first channel is a steady 1000 Hz tone.
+		share := 2 * (toneSin*toneSin + toneCos*toneCos) / float64(tonePhase) / toneAll
+		fmt.Printf("share of the sound that is a 1000 Hz tone: %.0f%%\n", 100*share)
+	}
 	if len(clicks) > 0 {
 		line := "clicks heard at, in seconds:"
 		for _, click := range clicks {

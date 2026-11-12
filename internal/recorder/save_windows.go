@@ -4,9 +4,13 @@ package recorder
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"lazareplay/internal/clock"
 	"lazareplay/internal/mp4"
@@ -32,6 +36,15 @@ func (r *Recorder) Save(path string) (Clip, error) {
 	movie, length, err := build(r.ring.Snapshot(), r.sound.Load())
 	if err != nil {
 		return Clip{}, err
+	}
+	folder := filepath.Dir(path)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return Clip{}, err
+	}
+	if size, err := movie.Size(); err == nil {
+		if free, ok := room(folder); ok && free < size+8<<20 {
+			return Clip{}, fmt.Errorf("There is not enough room on that disk: the clip needs %d MB and %d MB are free.", size>>20+1, free>>20)
+		}
 	}
 	// Write at background priority so a game loading from the same disk is
 	// served first. Windows applies that to this thread only.
@@ -61,6 +74,17 @@ func (r *Recorder) Save(path string) (Clip, error) {
 		return Clip{}, err
 	}
 	return Clip{Path: path, Length: length, Bytes: written}, nil
+}
+
+// room returns the free space, in bytes, on the disk that holds a folder.
+func room(folder string) (int64, bool) {
+	path, err := syscall.UTF16PtrFromString(folder)
+	if err != nil {
+		return 0, false
+	}
+	var free uint64
+	ok, _, _ := kernel32.NewProc("GetDiskFreeSpaceExW").Call(uintptr(unsafe.Pointer(path)), uintptr(unsafe.Pointer(&free)), 0, 0)
+	return int64(free), ok != 0
 }
 
 // build lays a copy of the loop out as an MP4 file.

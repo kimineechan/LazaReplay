@@ -152,6 +152,9 @@ func record() {
 	}
 	r := recorder.Start(options)
 	for i := 0; i < seconds; i++ {
+		if i == 1 && option("tone", 0) == 1 {
+			playTone()
+		}
 		time.Sleep(time.Second)
 		s := r.Status()
 		fmt.Printf("%2ds state=%d %dx%d %q hardware=%v pointer=%v sound=%v held=%.1fs %d KB frames=%d late=%d %s %s\n",
