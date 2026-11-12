@@ -30,7 +30,15 @@ On Windows, run `build.cmd` before submitting a change. It regenerates the resou
 .\dist\lazareplay-check.exe
 ```
 
-The self-check has other modes that exercise one stage at a time. `lazareplay-check.exe record card=1 seconds=5 out=clip.mp4` followed by `lazareplay-check.exe verify file=clip.mp4 pointers=1` is the quickest loop while working on capture, conversion or encoding. Setting the environment variable `LAZAREPLAY_PROFILE` makes `record` print where the capture thread spends its time.
+The self-check has other modes that exercise one stage at a time. `lazareplay-check.exe record card=1 seconds=5 out=clip.mp4` followed by `lazareplay-check.exe verify file=clip.mp4 pointers=1` is the quickest loop while working on capture, conversion or encoding. Three environment variables help while developing:
+
+| Variable | Effect |
+| --- | --- |
+| `LAZAREPLAY_PROFILE` | Any value makes `record` print where the capture thread spends its time |
+| `LAZAREPLAY_FAULT` | A number makes a hardware encoder report a failure after that many pictures, to exercise the fallback to the next encoder |
+| `LAZAREPLAY_SETTINGS` | The path of a settings file to use in place of the one in your application data folder, so that testing the app leaves your own settings alone |
+
+`record` also takes `lose=90`, which makes the generated source fail every 90 pictures the way a monitor does when Windows takes it away, and `processor=1`, which converts with the chip's video processor in place of drawing.
 
 ### Layout
 

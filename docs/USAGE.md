@@ -47,7 +47,7 @@ Changes take effect at once and are remembered. Changing the length, the quality
 | Quality | Low, Medium or High. Higher quality is a higher bitrate, which is more memory and larger files. The line beside it shows the picture size and bitrate that result |
 | Picture | The tallest picture to record. A larger screen is scaled down to it; a smaller one is never scaled up. Then the rate: 30 or 60 pictures a second |
 | Screen | Which screen to record, when there is more than one |
-| Shortcut | Click the box and press the keys you want. A key on its own is not accepted, because it would be taken away from every other program |
+| Shortcut | Click the box and press the keys you want. A key on its own, or with Shift alone, has Ctrl and Alt added to it, because otherwise it would be taken away from every other program |
 | Record what the computer plays | Sound from the default playback device. Untick for silent clips |
 | Save clips to | The folder for clips. **Change** picks another |
 | Play a sound when a clip is saved | The confirmation described above |
@@ -82,7 +82,7 @@ LazaReplay runs one copy at a time. Starting it again talks to the copy that is 
 
 ## The self-check
 
-`lazareplay-check.exe` tests the recorder on your computer. Double-click it, or run it in a terminal. It takes about half a minute and prints a report:
+`lazareplay-check.exe` tests the recorder on your computer. Double-click it, or run it in a terminal. It takes under a minute and prints a report:
 
 1. The graphics chips, the screens on each, and the video encoders each offers.
 2. For every screen, a recording of a generated test picture made through that screen's chip. The saved clip is played back with the decoders built into Windows and compared with the picture by numbers: every frame present and in order, the colours, the mouse pointer, the time between pictures, and sound in step with the picture.
