@@ -73,25 +73,6 @@ func (d *Device) NewConverter(inWidth, inHeight, outWidth, outHeight, rate int) 
 // Drawn reports whether the converter draws, the cheaper of its two ways.
 func (c *Converter) Drawn() bool { return c.draw != nil }
 
-// fit returns the largest rectangle of the input's shape inside the output,
-// centred, on even coordinates.
-func fit(inWidth, inHeight, outWidth, outHeight int) Rect {
-	w, h := outWidth, outHeight
-	if inWidth*outHeight > inHeight*outWidth {
-		h = (inHeight*outWidth/inWidth + 1) &^ 1
-	} else if inWidth*outHeight < inHeight*outWidth {
-		w = (inWidth*outHeight/inHeight + 1) &^ 1
-	}
-	if w > outWidth {
-		w = outWidth
-	}
-	if h > outHeight {
-		h = outHeight
-	}
-	x, y := (outWidth-w)/2&^1, (outHeight-h)/2&^1
-	return Rect{int32(x), int32(y), int32(x + w), int32(y + h)}
-}
-
 // NewTarget creates a texture for converted frames.
 func (c *Converter) NewTarget() (*Target, error) {
 	texture, err := c.device.NewTexture(c.OutWidth, c.OutHeight, FormatNV12, UsageDefault, BindRenderTarget|BindShaderResource, 0, nil, 0)

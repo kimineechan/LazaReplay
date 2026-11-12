@@ -28,12 +28,6 @@ type LUID struct {
 	High int32
 }
 
-// Rect is a rectangle in desktop coordinates.
-type Rect struct{ Left, Top, Right, Bottom int32 }
-
-func (r Rect) Width() int  { return int(r.Right - r.Left) }
-func (r Rect) Height() int { return int(r.Bottom - r.Top) }
-
 // adapterDesc mirrors DXGI_ADAPTER_DESC1.
 type adapterDesc struct {
 	Description           [128]uint16

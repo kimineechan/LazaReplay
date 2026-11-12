@@ -1,5 +1,30 @@
 package dx
 
+// Rect is a rectangle in desktop coordinates.
+type Rect struct{ Left, Top, Right, Bottom int32 }
+
+func (r Rect) Width() int  { return int(r.Right - r.Left) }
+func (r Rect) Height() int { return int(r.Bottom - r.Top) }
+
+// fit returns the largest rectangle of the input's shape inside the output,
+// centred, on even coordinates.
+func fit(inWidth, inHeight, outWidth, outHeight int) Rect {
+	w, h := outWidth, outHeight
+	if inWidth*outHeight > inHeight*outWidth {
+		h = (inHeight*outWidth/inWidth + 1) &^ 1
+	} else if inWidth*outHeight < inHeight*outWidth {
+		w = (inWidth*outHeight/inHeight + 1) &^ 1
+	}
+	if w > outWidth {
+		w = outWidth
+	}
+	if h > outHeight {
+		h = outHeight
+	}
+	x, y := (outWidth-w)/2&^1, (outHeight-h)/2&^1
+	return Rect{int32(x), int32(y), int32(x + w), int32(y + h)}
+}
+
 // Pointer shape types, as Windows reports them.
 const (
 	ShapeMonochrome  = 1 // one bit per pixel: an AND mask above an XOR mask

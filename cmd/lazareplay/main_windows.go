@@ -50,6 +50,7 @@ type app struct {
 	generation int                // counts restarts, so a late one can tell it was overtaken
 	paused     bool
 	saving     bool
+	leaving    bool   // exit was asked for during a save and waits for it
 	hinted     bool   // the "still running" note has been shown
 	shortcut   string // why the shortcut does not work, or ""
 
@@ -117,7 +118,7 @@ func main() {
 		case signalSave:
 			a.saveClip()
 		case signalExit:
-			w.Close()
+			a.exit()
 		default:
 			w.Show()
 		}
@@ -170,10 +171,10 @@ func (a *app) build() {
 	w.Label("Last clip", 28, 429, 110, 26)
 	a.clip = w.Edit("", 143, 424, 447, 32)
 	a.show = w.Button("Show in folder", 602, 423, 130, 34, func() {
-		if a.lastClip != "" {
+		if _, err := os.Stat(a.lastClip); a.lastClip != "" && err == nil {
 			w.Reveal(a.lastClip)
 		} else {
-			w.OpenFolder(a.clipFolder())
+			a.openFolder()
 		}
 	})
 	a.keys = w.Quiet("", 28, 466, 704, 24)
@@ -385,11 +386,11 @@ func (a *app) menu() []winui.MenuEntry {
 	return []winui.MenuEntry{
 		{Text: "Save the last " + lengthNames[index(settings.Lengths, a.settings.Seconds)], Action: a.saveClip, Greyed: a.paused || a.saving},
 		{Text: "Open LazaReplay", Action: a.w.Show},
-		{Text: "Open the clips folder", Action: func() { a.w.OpenFolder(a.clipFolder()) }},
+		{Text: "Open the clips folder", Action: a.openFolder},
 		{},
 		{Text: pause, Action: a.togglePause},
 		{},
-		{Text: "Exit", Action: a.w.Close},
+		{Text: "Exit", Action: a.exit},
 	}
 }
 
@@ -485,6 +486,10 @@ func (a *app) saveClip() {
 		a.w.Post(func() {
 			a.saving = false
 			a.w.Enable(a.save, true)
+			if a.leaving {
+				a.w.Close()
+				return
+			}
 			if err != nil {
 				a.say("Not saved. " + sentence(err))
 				if !a.w.Visible() {
@@ -504,6 +509,27 @@ func (a *app) saveClip() {
 			}
 		})
 	}()
+}
+
+// exit closes the program. A clip that is being written is finished first.
+func (a *app) exit() {
+	if a.saving {
+		a.leaving = true
+		a.say("Finishing the clip, then closing...")
+		return
+	}
+	a.w.Close()
+}
+
+// openFolder shows the folder clips are saved in, creating it if this is
+// the first time.
+func (a *app) openFolder() {
+	folder := a.clipFolder()
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		a.say(sentence(err))
+		return
+	}
+	a.w.OpenFolder(folder)
 }
 
 // unused returns the path, or the path with a number added when a file of

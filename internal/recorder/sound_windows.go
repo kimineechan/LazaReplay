@@ -29,7 +29,7 @@ func (r *Recorder) listen() {
 	defer runtime.UnlockOSThread()
 	com.Init()
 	for !r.stopped() {
-		err := r.hear()
+		err := guarded(r.hear)
 		r.set(func(s *Status) {
 			s.Sound = false
 			if err != nil {

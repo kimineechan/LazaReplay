@@ -1,11 +1,23 @@
 //go:build windows
 
-// probe is a development aid. It exercises one stage of the recorder at a
-// time and prints numbers, never pictures.
+// lazareplay-check tests the recorder on the computer it is run on and
+// prints a report. Run with no arguments it does the whole self-check:
+// it records a generated picture, plays the clip back and compares the
+// two by numbers, then makes a short recording of each real screen.
 //
-//	probe            which adapter drives each monitor, which encoders exist
-//	probe colour     convert known colours on the graphics chip and check them
-//	probe capture    capture the main screen for three seconds, print timing
+// The other modes exercise one stage at a time and are development aids:
+//
+//	lazareplay-check list      graphics chips, screens and encoders
+//	lazareplay-check colour    convert known colours on the chip and check them
+//	lazareplay-check capture   capture the main screen for three seconds
+//	lazareplay-check pattern   show the test card in a window
+//	lazareplay-check encode    feed generated frames through an encoder
+//	lazareplay-check codecs    try to start every hardware encoder
+//	lazareplay-check record    run the recorder and save a clip
+//	lazareplay-check verify    play a saved clip back and print what it holds
+//	lazareplay-check serve     offer a folder of clips to a web browser
+//
+// It prints numbers, never pictures.
 package main
 
 import (
@@ -33,6 +45,8 @@ func main() {
 	}
 	switch mode {
 	case "":
+		selfCheck()
+	case "list":
 		adapters()
 	case "colour":
 		colour()

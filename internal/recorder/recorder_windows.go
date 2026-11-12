@@ -129,6 +129,7 @@ type Status struct {
 	Encoder  string        // name of the video encoder in use
 	Hardware bool          // whether it runs on the graphics chip
 	Pointer  bool          // whether the mouse pointer can be drawn
+	Drawn    bool          // pictures are converted by drawing, the cheaper way
 	Rotated  bool          // the screen is turned; it is recorded as the panel sees it
 	Sound    bool          // whether sound is being recorded
 	Silent   string        // why not, in plain words, when it was asked for
@@ -163,6 +164,7 @@ type Recorder struct {
 	sps, pps []byte
 	lastOut  int64
 	avoid    map[string]int // encoders that failed soon after starting, and how often
+	avoided  time.Time      // when one last did
 }
 
 // Start begins recording. It returns at once; progress is reported by
@@ -281,7 +283,7 @@ func (r *Recorder) run() {
 			}
 		})
 		began := time.Now()
-		err := r.session()
+		err := guarded(r.session)
 		if r.stopped() {
 			return
 		}
@@ -295,6 +297,7 @@ func (r *Recorder) run() {
 			if errors.As(err, &broken) && !lost {
 				if time.Since(began) < 30*time.Second {
 					r.avoid[broken.encoder]++
+					r.avoided = time.Now()
 				} else {
 					r.avoid[broken.encoder] = 0
 				}
@@ -306,6 +309,18 @@ func (r *Recorder) run() {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// guarded runs a function and turns a panic inside it into an error, so
+// that a fault in one session is reported and retried instead of taking
+// the whole program down.
+func guarded(work func() error) (err error) {
+	defer func() {
+		if fault := recover(); fault != nil {
+			err = fmt.Errorf("Unexpected fault: %v.", fault)
+		}
+	}()
+	return work()
 }
 
 // explain puts a failure in plain words.
@@ -569,8 +584,10 @@ func (r *Recorder) choose(p *pipeline, adapter *dx.Adapter) error {
 			usable++
 		}
 	}
-	if usable == 0 {
-		clear(r.avoid) // every encoder has let us down: give them all another go
+	if usable == 0 || time.Since(r.avoided) > 2*time.Minute {
+		// Every encoder has let us down, or the trouble was a while ago and
+		// may have passed, as it does after a driver update. Try them all.
+		clear(r.avoid)
 	}
 	screenWidth, screenHeight := p.screen.Size()
 	var problems []string
@@ -651,6 +668,7 @@ func (r *Recorder) session() error {
 		s.Screen, s.Width, s.Height, s.Rate = output.Name, p.width, p.height, p.rate
 		s.Encoder, s.Hardware = p.encoder.Label(), p.encoder.OnChip()
 		s.Pointer, s.Rotated = p.painter != nil, p.rotated() && o.Source == nil
+		s.Drawn = p.converter.Drawn()
 	})
 
 	interval := clock.Second / int64(p.rate)
