@@ -28,6 +28,10 @@ type Source struct {
 	// Epoch, when set, lights the lamp for the first half of every second
 	// counted from that time.
 	Epoch int64
+	// Lose makes the source fail after this many frames the way a monitor
+	// does when Windows takes it away for the lock screen or a change of
+	// resolution, to exercise how the recorder gets the screen back.
+	Lose int
 	// Clock makes the card show the time since Epoch in milliseconds in
 	// place of the frame number, so that a recording says exactly when
 	// each of its pictures was taken.
@@ -55,6 +59,9 @@ func (s *Source) Size() (width, height int) { return s.width, s.height }
 func (s *Source) Acquire(wait uint32) (bool, error) {
 	if s.Still > 0 && s.next >= s.Still {
 		return false, nil
+	}
+	if s.Lose > 0 && s.next >= s.Lose {
+		return false, &com.Error{Op: "test source", Code: dx.ErrAccessLost}
 	}
 	number := s.next
 	if s.Clock {

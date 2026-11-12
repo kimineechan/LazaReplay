@@ -15,7 +15,6 @@
 //	lazareplay-check codecs    try to start every hardware encoder
 //	lazareplay-check record    run the recorder and save a clip
 //	lazareplay-check verify    play a saved clip back and print what it holds
-//	lazareplay-check serve     offer a folder of clips to a web browser
 //
 // It prints numbers, never pictures.
 package main
@@ -62,8 +61,6 @@ func main() {
 		record()
 	case "verify":
 		verify()
-	case "serve":
-		serve()
 	default:
 		fmt.Println("unknown mode", mode)
 	}

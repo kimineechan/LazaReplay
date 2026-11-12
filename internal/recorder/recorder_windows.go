@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -245,6 +246,15 @@ var (
 var Profile [8]atomic.Int64
 
 var profiling = os.Getenv("LAZAREPLAY_PROFILE") != ""
+
+// failAfter, set through the environment variable LAZAREPLAY_FAULT, makes
+// a hardware encoder report a failure after that many pictures. It exists
+// to exercise the fallback to the next encoder, which real hardware seldom
+// provides an occasion to test.
+var failAfter = func() int {
+	n, _ := strconv.Atoi(os.Getenv("LAZAREPLAY_FAULT"))
+	return n
+}()
 
 // lap adds the time since *from to a phase and moves *from to now.
 func lap(phase int, from *int64) {
@@ -682,7 +692,7 @@ func (r *Recorder) session() error {
 	lastSubmit, lastKey := int64(never), int64(never)
 	var retry int64 // when to try for the screen again
 	pending := false
-	refused, failures := 0, 0
+	refused, failures, submitted := 0, 0, 0
 	for !r.stopped() {
 		tick, _ := ticker.Wait()
 		at := tick - r.epoch
@@ -776,6 +786,9 @@ func (r *Recorder) session() error {
 			lastKey = at
 		}
 		lastSubmit = at
+		if submitted++; failAfter > 0 && submitted >= failAfter && p.encoder.OnChip() {
+			return broken(errors.New("A failure was asked for, to test the fallback."))
+		}
 		p.device.Flush()
 		lap(5, &mark)
 		if profiling && Profile[6].Add(1)%30 == 0 {

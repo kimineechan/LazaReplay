@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible LazaReplay problem.
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please run `lazareplay-check.exe`, which comes in the same ZIP, and paste its whole report below. It lists your graphics chips and encoders and tests the recorder on your computer. Do not attach a clip that shows anything private.
+  - type: input
+    id: version
+    attributes:
+      label: LazaReplay version
+      placeholder: '1.0.0'
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: 'Windows 11, version and build number'
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected part
+      options:
+        - Recording the screen
+        - Recording sound
+        - Saving a clip, or the saved file
+        - The shortcut
+        - The window, the settings or the notification area icon
+        - Performance while playing a game
+        - Source build or release workflow
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Self-check report
+      description: The full output of lazareplay-check.exe.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behaviour
+      description: Include the exact text of the Status line or of the line at the foot of the window if it showed a problem.
+    validations:
+      required: true

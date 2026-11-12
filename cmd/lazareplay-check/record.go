@@ -150,6 +150,7 @@ func record() {
 				return nil, err
 			}
 			source.Still, source.Epoch, source.Clock = still, epoch, timed
+			source.Lose = option("lose", 0)
 			return pointed{source}, nil
 		}
 	}

@@ -1,0 +1,25 @@
+{
+  "owner": "kimineechan",
+  "name": "LazaReplay",
+  "visibility": "public",
+  "description": "Portable Windows instant replay: keeps the last minutes of your screen in memory, hardware encoded, and saves them as an MP4 when you press a shortcut.",
+  "topics": [
+    "windows",
+    "golang",
+    "desktop-app",
+    "screen-recorder",
+    "instant-replay",
+    "replay-buffer",
+    "game-capture",
+    "h264",
+    "nvenc",
+    "quicksync",
+    "direct3d",
+    "portable-app",
+    "win32",
+    "windows-utility"
+  ],
+  "default_branch": "main",
+  "license": "MIT",
+  "first_release": "v1.0.0"
+}
