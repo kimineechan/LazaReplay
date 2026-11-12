@@ -45,6 +45,10 @@ func main() {
 		encode()
 	case "codecs":
 		codecs()
+	case "record":
+		record()
+	case "verify":
+		verify()
 	default:
 		fmt.Println("unknown mode", mode)
 	}
@@ -215,6 +219,22 @@ func capture() {
 		targets = append(targets, t)
 	}
 	wait := option("wait", 0) // milliseconds to wait for a frame at each tick
+	var encoder *mf.Encoder
+	if option("encoder", 0) == 1 {
+		config := mf.Config{Width: dup.Width, Height: dup.Height, Rate: 60, Bitrate: 10_000_000, Peak: 15_000_000, KeyInterval: 120}
+		for _, codec := range encoders(device) {
+			if encoder, err = codec.Open(device.Object, config); err == nil {
+				break
+			}
+		}
+		if encoder == nil {
+			fail(err)
+		}
+		defer encoder.Close()
+		fmt.Println("encoder open:", encoder.Name)
+	}
+	submit := option("submit", 0) == 1
+	outputs := 0
 	ticker := clock.NewTicker(clock.Second / 60)
 	defer ticker.Close()
 	var frames, quiet, direct, pointer, skipped, accumulated int
@@ -237,7 +257,7 @@ func capture() {
 		began = clock.Now()
 		accumulated += dup.Accumulated
 		frames++
-		if dup.PointerVisible {
+		if dup.Pointer().Visible {
 			pointer++
 		}
 		if !shown {
@@ -245,13 +265,25 @@ func capture() {
 			fmt.Printf("desktop texture: %dx%d format %d bind 0x%X misc 0x%X\n", d.Width, d.Height, d.Format, d.BindFlags, d.MiscFlags)
 			shown = true
 		}
-		if err := converter.Convert(dup.Texture(), targets[frames%len(targets)]); err != nil {
+		target := targets[frames%len(targets)]
+		if err := converter.Convert(dup.Texture(), target); err != nil {
 			fmt.Println("direct conversion:", err)
 		} else {
 			direct++
 		}
+		if encoder != nil && submit {
+			encoder.Collect(func([]byte, int64) { outputs++ })
+			if ok, _ := encoder.Accepting(); ok && target.Idle() {
+				if err := encoder.Submit(target.Texture, tick, clock.Second/60, frames == 1); err != nil {
+					fmt.Println("submit:", err)
+				}
+			}
+		}
 		device.Flush()
 		work = append(work, clock.Now()-began)
+	}
+	if encoder != nil {
+		fmt.Println("encoder outputs:", outputs)
 	}
 	fmt.Printf("180 ticks waiting up to %d ms: %d frames, %d ticks with nothing new, %d ticks skipped\n", wait, frames, quiet, skipped)
 	fmt.Printf("screen updates folded into those frames: %d; time spent waiting: median %.2f ms, worst %.2f ms\n", accumulated, ms(median(waited)), ms(largest(waited)))
@@ -260,8 +292,8 @@ func capture() {
 	if len(work) > 0 {
 		fmt.Printf("processor time per frame: median %.3f ms, worst %.3f ms\n", ms(median(work)), ms(largest(work)))
 	}
-	if dup.Shape != nil {
-		fmt.Printf("pointer shape: type %d, %dx%d\n", dup.Shape.Type, dup.Shape.Width, dup.Shape.Height)
+	if shape := dup.Pointer().Shape; shape != nil {
+		fmt.Printf("pointer shape: type %d, %dx%d\n", shape.Type, shape.Width, shape.Height)
 	}
 }
 

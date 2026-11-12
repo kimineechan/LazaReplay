@@ -38,21 +38,6 @@ type shapeInfo struct {
 	HotX, HotY                 int32
 }
 
-// Pointer shape types.
-const (
-	ShapeMonochrome  = 1 // one bit per pixel: an AND mask above an XOR mask
-	ShapeColour      = 2 // four bytes per pixel with transparency
-	ShapeMaskedColor = 4 // four bytes per pixel, the fourth choosing replace or XOR
-)
-
-// Shape is the picture of the mouse pointer as Windows reports it.
-type Shape struct {
-	Type          uint32
-	Width, Height int
-	Pitch         int
-	Data          []byte
-}
-
 // Duplication delivers the picture of one monitor as it changes. Windows
 // calls this desktop duplication.
 type Duplication struct {
@@ -67,14 +52,22 @@ type Duplication struct {
 	// Accumulated is how many screen updates the last frame folds together.
 	Accumulated int
 
-	// Pointer state, kept current as frames arrive. PointerX and PointerY
-	// are the top-left corner of the pointer picture on this monitor.
-	PointerVisible bool
-	PointerX       int
-	PointerY       int
-	Shape          *Shape
-	ShapeSerial    int // counts changes of Shape
+	pointer Pointer // kept current as frames arrive
 }
+
+// Pointer is the state of the mouse pointer on one monitor.
+type Pointer struct {
+	Visible bool
+	X, Y    int    // top-left corner of its picture
+	Shape   *Shape // nil until Windows has reported one
+	Serial  int    // changes whenever Shape does
+}
+
+// Size returns the size of the desktop picture.
+func (d *Duplication) Size() (width, height int) { return d.Width, d.Height }
+
+// Pointer returns the state of the mouse pointer as of the last frame.
+func (d *Duplication) Pointer() Pointer { return d.pointer }
 
 // Duplicate starts duplicating a monitor. The device must be on the adapter
 // that drives it.
@@ -127,13 +120,13 @@ func (d *Duplication) Acquire(wait uint32) (changed bool, err error) {
 	d.Accumulated = int(info.AccumulatedFrames)
 	changed = info.LastPresentTime != 0
 	if info.LastMouseUpdateTime != 0 {
-		was := d.PointerVisible
-		d.PointerVisible = info.PointerVisible != 0
-		d.PointerX, d.PointerY = int(info.PointerX), int(info.PointerY)
+		was := d.pointer.Visible
+		d.pointer.Visible = info.PointerVisible != 0
+		d.pointer.X, d.pointer.Y = int(info.PointerX), int(info.PointerY)
 		if info.PointerShapeSize != 0 {
 			d.readShape(info.PointerShapeSize)
 		}
-		changed = changed || was || d.PointerVisible
+		changed = changed || was || d.pointer.Visible
 	}
 	return changed, nil
 }
@@ -149,8 +142,8 @@ func (d *Duplication) readShape(size uint32) {
 	if int32(hr) < 0 {
 		return
 	}
-	d.Shape = &Shape{Type: info.Type, Width: int(info.Width), Height: int(info.Height), Pitch: int(info.Pitch), Data: data}
-	d.ShapeSerial++
+	d.pointer.Shape = &Shape{Type: info.Type, Width: int(info.Width), Height: int(info.Height), Pitch: int(info.Pitch), Data: data}
+	d.pointer.Serial++
 }
 
 // Release lets go of the held frame.

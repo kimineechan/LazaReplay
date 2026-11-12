@@ -65,6 +65,14 @@ func New(window, frame int64, limit int) *Ring {
 	return &Ring{window: window, frame: frame, limit: limit}
 }
 
+// SetLimit changes the most bytes the loop may hold; 0 removes the limit.
+func (r *Ring) SetLimit(limit int) {
+	r.mu.Lock()
+	r.limit = limit
+	r.trim()
+	r.mu.Unlock()
+}
+
 // SetParams records the parameter sets in force from now on.
 func (r *Ring) SetParams(sps, pps []byte) {
 	r.mu.Lock()
@@ -139,17 +147,27 @@ func (r *Ring) trim() {
 		} else {
 			break
 		}
+		g := r.groups[drop]
 		over := r.limit > 0 && r.bytes > r.limit
-		if next > edge && !over {
+		if next > edge && !over && !stale(g, edge) {
 			break
 		}
-		g := r.groups[drop]
 		r.bytes -= len(g.Video) + len(g.Audio)
 		drop++
 	}
 	if drop > 0 {
 		r.groups = append(r.groups[:0:0], r.groups[drop:]...)
 	}
+}
+
+// stale reports whether a group ended well before the edge of the window.
+// Normally the next group follows within a couple of seconds, so the last
+// picture of a group that straddles the edge is still wanted. After a break
+// in recording that picture would be shown for the whole break; the group
+// is dropped instead and the clip starts after the break.
+func stale(g *Group, edge int64) bool {
+	const longest = 5 * 10_000_000
+	return g.Frames[len(g.Frames)-1].Time+longest < edge
 }
 
 // Clip is a copy of the loop taken at one moment.
@@ -175,7 +193,7 @@ func (r *Ring) Snapshot() Clip {
 	groups = groups[first:]
 	// Start from the last group that begins at or before the window's edge.
 	edge := r.newest - r.window
-	for len(groups) > 1 && groups[1].Start() <= edge {
+	for len(groups) > 1 && (groups[1].Start() <= edge || stale(groups[0], edge)) {
 		groups = groups[1:]
 	}
 	return Clip{Groups: groups, End: r.newest + r.frame}

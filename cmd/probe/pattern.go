@@ -8,23 +8,15 @@ import (
 	"unsafe"
 
 	"lazareplay/internal/clock"
+	"lazareplay/internal/testcard"
 )
 
-// The test pattern is a small window with known contents: eight flat colour
-// bars, a frame number drawn as sixteen black or white squares, and a square
-// that moves every frame. A recording of it can be checked by numbers alone.
+// The pattern window shows the test card on the real screen, at the place
+// the generated source puts it, so both can be checked the same way.
 const (
-	patternX, patternY = 40, 40
-	patternW, patternH = 640, 360
-	barsH              = 240
-	bitY, bitSize      = 252, 20
-	bitX, bitStep      = 20, 24
+	patternX, patternY = testcard.X, testcard.Y
+	patternW, patternH = testcard.Width, testcard.Height
 )
-
-var patternBars = [8][3]byte{
-	{255, 255, 255}, {255, 255, 0}, {0, 255, 255}, {0, 255, 0},
-	{255, 0, 255}, {255, 0, 0}, {0, 0, 255}, {0, 0, 0},
-}
 
 var (
 	user32            = syscall.NewLazyDLL("user32.dll")
@@ -105,17 +97,7 @@ func pattern() {
 	selectObject.Call(memory, bitmap)
 	pixels := unsafe.Slice((*byte)(bits), patternW*patternH*4)
 
-	fill := func(x0, y0, x1, y1 int, r, g, b byte) {
-		for y := y0; y < y1; y++ {
-			row := pixels[(y*patternW+x0)*4 : (y*patternW+x1)*4]
-			for i := 0; i < len(row); i += 4 {
-				row[i], row[i+1], row[i+2], row[i+3] = b, g, r, 255
-			}
-		}
-	}
-	for i, c := range patternBars {
-		fill(i*patternW/8, 0, (i+1)*patternW/8, barsH, c[0], c[1], c[2])
-	}
+	testcard.PaintAt(pixels, patternW*4, 0, 0, 0, true)
 	end := clock.Now() + int64(seconds)*clock.Second
 	frame := 0
 	for ; clock.Now() < end; frame++ {
@@ -128,17 +110,7 @@ func pattern() {
 			translateMessage.Call(uintptr(unsafe.Pointer(&message)))
 			dispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
 		}
-		fill(0, barsH, patternW, patternH, 128, 128, 128)
-		for bit := 0; bit < 16; bit++ {
-			level := byte(0)
-			if frame>>bit&1 == 1 {
-				level = 255
-			}
-			x := bitX + bit*bitStep
-			fill(x, bitY, x+bitSize, bitY+bitSize, level, level, level)
-		}
-		x := frame * 4 % (patternW - 40)
-		fill(x, 300, x+40, 340, 255, 255, 255)
+		testcard.PaintAt(pixels, patternW*4, 0, 0, frame, false)
 		bitBlt.Call(screen, 0, 0, patternW, patternH, memory, 0, 0, 0x00CC0020)
 		dwmFlush.Call()
 	}

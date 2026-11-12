@@ -10,36 +10,8 @@ import (
 	"lazareplay/internal/dx"
 	"lazareplay/internal/h264"
 	"lazareplay/internal/mf"
+	"lazareplay/internal/testcard"
 )
-
-// paint draws the test pattern for one frame into a BGRA picture, with its
-// top-left corner at patternX, patternY, as the pattern window would show it.
-func paint(pixels []byte, width int, frame int, all bool) {
-	fill := func(x0, y0, x1, y1 int, r, g, b byte) {
-		for y := y0 + patternY; y < y1+patternY; y++ {
-			row := pixels[(y*width+x0+patternX)*4 : (y*width+x1+patternX)*4]
-			for i := 0; i < len(row); i += 4 {
-				row[i], row[i+1], row[i+2], row[i+3] = b, g, r, 255
-			}
-		}
-	}
-	if all {
-		for i, c := range patternBars {
-			fill(i*patternW/8, 0, (i+1)*patternW/8, barsH, c[0], c[1], c[2])
-		}
-	}
-	fill(0, barsH, patternW, patternH, 128, 128, 128)
-	for bit := 0; bit < 16; bit++ {
-		level := byte(0)
-		if frame>>bit&1 == 1 {
-			level = 255
-		}
-		x := bitX + bit*bitStep
-		fill(x, bitY, x+bitSize, bitY+bitSize, level, level, level)
-	}
-	x := frame * 4 % (patternW - 40)
-	fill(x, 300, x+40, 340, 255, 255, 255)
-}
 
 // encoders lists the encoders to try for a device: its own hardware ones,
 // then the software one. With software=1 only the latter.
@@ -69,7 +41,7 @@ func encode() {
 	for i := 0; i < len(pixels); i += 4 {
 		pixels[i], pixels[i+1], pixels[i+2], pixels[i+3] = 40, 40, 40, 255
 	}
-	paint(pixels, width, 0, true)
+	testcard.Paint(pixels, width*4, 0, true)
 	source, err := device.NewTexture(width, height, dx.FormatBGRA, dx.UsageDefault, dx.BindRenderTarget|dx.BindShaderResource, 0, pixels, width*4)
 	if err != nil {
 		fail(err)
@@ -136,7 +108,7 @@ func encode() {
 	next := 0
 	for i := 0; i < frames; i++ {
 		ticker.Wait()
-		paint(pixels, width, i, false)
+		testcard.Paint(pixels, width*4, i, false)
 		device.Update(source, pixels, width*4)
 		began := clock.Now()
 		if err := encoder.Collect(take); err != nil {
