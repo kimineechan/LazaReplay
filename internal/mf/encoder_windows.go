@@ -217,6 +217,7 @@ func (e *Encoder) configure(device unsafe.Pointer) error {
 			return err
 		}
 	}
+	e.message(messageFlush, 0) // some encoders want a clean slate before they start
 	if err := e.message(messageBeginStreaming, 0); err != nil {
 		return err
 	}

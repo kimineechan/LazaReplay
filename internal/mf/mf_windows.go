@@ -6,7 +6,9 @@
 package mf
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -73,12 +75,17 @@ var (
 	FormatFloat = com.Format(3)
 	FormatAAC   = com.Format(0x1610)
 
+	hardwareVendor       = com.ID("3aecb0cc-035b-4bcc-8185-2b8d551ef3af")
 	categoryVideoEncoder = com.ID("f79eac7d-e545-4387-bdee-d647d7bde42a")
 	categoryAudioEncoder = com.ID("91c64bd0-f91e-4d8c-9276-db248279d975")
 )
 
-// Startup initialises Media Foundation for the process.
+// Startup initialises Media Foundation for the process. It fails with a
+// plain explanation on the editions of Windows that ship without it.
 func Startup() error {
+	if err := mfStartup.Find(); err != nil {
+		return errors.New("The media features of Windows are missing. On an N or KN edition of Windows, add the Media Feature Pack under Settings, Apps, Optional features, then start LazaReplay again.")
+	}
 	hr, _, _ := mfStartup.Call(mfVersion, 0)
 	return com.Check("MFStartup", hr)
 }
@@ -234,9 +241,10 @@ func (c *Codec) Describe() []string {
 var propVariantClear = syscall.NewLazyDLL("ole32.dll").NewProc("PropVariantClear")
 
 // VideoEncoders lists the H.264 encoders. With an adapter ID it returns the
-// hardware encoders of that graphics adapter; with nil it returns the
-// software encoders that run on the processor.
-func VideoEncoders(adapter *[8]byte) ([]*Codec, error) {
+// hardware encoders of that graphics adapter, whose maker is given by its
+// PCI vendor number; with nil it returns the software encoders that run on
+// the processor.
+func VideoEncoders(adapter *[8]byte, vendor uint32) ([]*Codec, error) {
 	out := typeInfo{TypeVideo, FormatH264}
 	var list *unsafe.Pointer
 	var count uint32
@@ -252,8 +260,15 @@ func VideoEncoders(adapter *[8]byte) ([]*Codec, error) {
 			return nil, err
 		}
 		flags = 0x4 | 0x40 // hardware, sorted
-		hr, _, _ = mfEnum2.Call(uintptr(unsafe.Pointer(&categoryVideoEncoder)), flags, 0, uintptr(unsafe.Pointer(&out)),
-			uintptr(attrs.P), uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count)))
+		if mfEnum2.Find() == nil {
+			hr, _, _ = mfEnum2.Call(uintptr(unsafe.Pointer(&categoryVideoEncoder)), flags, 0, uintptr(unsafe.Pointer(&out)),
+				uintptr(attrs.P), uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count)))
+		} else {
+			// Early versions of Windows 10 cannot ask per adapter. List every
+			// hardware encoder; those of other makers are dropped below.
+			hr, _, _ = mfEnumEx.Call(uintptr(unsafe.Pointer(&categoryVideoEncoder)), flags, 0, uintptr(unsafe.Pointer(&out)),
+				uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count)))
+		}
 	} else {
 		hr, _, _ = mfEnumEx.Call(uintptr(unsafe.Pointer(&categoryVideoEncoder)), flags, 0, uintptr(unsafe.Pointer(&out)),
 			uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Pointer(&count)))
@@ -265,6 +280,10 @@ func VideoEncoders(adapter *[8]byte) ([]*Codec, error) {
 	var found []*Codec
 	for _, p := range unsafe.Slice(list, count) {
 		a := Attributes{p}
+		if maker := a.String(&hardwareVendor); adapter != nil && maker != "" && !strings.EqualFold(maker, fmt.Sprintf("VEN_%04X", vendor)) {
+			a.Release()
+			continue
+		}
 		found = append(found, &Codec{Name: a.String(&FriendlyName), Hardware: adapter != nil, activate: a})
 	}
 	return found, nil

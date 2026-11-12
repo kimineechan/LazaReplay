@@ -18,13 +18,13 @@ import (
 func encoders(device *dx.Device) []*mf.Codec {
 	var list []*mf.Codec
 	if option("software", 0) == 0 {
-		hardware, err := mf.VideoEncoders(device.Adapter.ID())
+		hardware, err := mf.VideoEncoders(device.Adapter.ID(), device.Adapter.VendorID)
 		if err != nil {
 			fmt.Println("hardware encoders:", err)
 		}
 		list = append(list, hardware...)
 	}
-	software, err := mf.VideoEncoders(nil)
+	software, err := mf.VideoEncoders(nil, 0)
 	if err != nil {
 		fmt.Println("software encoders:", err)
 	}

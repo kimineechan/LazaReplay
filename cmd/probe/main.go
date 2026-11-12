@@ -13,7 +13,6 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"unsafe"
 
 	"lazareplay/internal/clock"
 	"lazareplay/internal/com"
@@ -84,8 +83,7 @@ func adapters() {
 		for _, o := range a.Outputs {
 			fmt.Printf("    monitor %s: %dx%d at %d,%d rotation %d\n", o.Name, o.Desktop.Width(), o.Desktop.Height(), o.Desktop.Left, o.Desktop.Top, o.Rotation)
 		}
-		id := *(*[8]byte)(unsafe.Pointer(&a.LUID))
-		encoders, err := mf.VideoEncoders(&id)
+		encoders, err := mf.VideoEncoders(a.ID(), a.VendorID)
 		if err != nil {
 			fmt.Println("    encoders:", err)
 			continue
@@ -97,7 +95,7 @@ func adapters() {
 			fmt.Println("    no hardware H.264 encoder")
 		}
 	}
-	software, err := mf.VideoEncoders(nil)
+	software, err := mf.VideoEncoders(nil, 0)
 	if err != nil {
 		fmt.Println("software encoders:", err)
 	}

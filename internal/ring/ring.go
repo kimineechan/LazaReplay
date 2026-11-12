@@ -65,6 +65,13 @@ func New(window, frame int64, limit int) *Ring {
 	return &Ring{window: window, frame: frame, limit: limit}
 }
 
+// SetFrame changes how long one picture lasts at the full frame rate.
+func (r *Ring) SetFrame(frame int64) {
+	r.mu.Lock()
+	r.frame = frame
+	r.mu.Unlock()
+}
+
 // SetLimit changes the most bytes the loop may hold; 0 removes the limit.
 func (r *Ring) SetLimit(limit int) {
 	r.mu.Lock()

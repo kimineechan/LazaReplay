@@ -117,7 +117,7 @@ func fit(inWidth, inHeight, outWidth, outHeight int) Rect {
 
 // NewTarget creates a texture for converted frames.
 func (c *Converter) NewTarget() (*Target, error) {
-	texture, err := c.device.NewTexture(c.OutWidth, c.OutHeight, FormatNV12, UsageDefault, BindRenderTarget, 0, nil, 0)
+	texture, err := c.device.NewTexture(c.OutWidth, c.OutHeight, FormatNV12, UsageDefault, BindRenderTarget|BindShaderResource, 0, nil, 0)
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,7 @@ func codecs() {
 		fail(err)
 	}
 	for _, a := range list {
-		found, err := mf.VideoEncoders(a.ID())
+		found, err := mf.VideoEncoders(a.ID(), a.VendorID)
 		if err != nil || len(found) == 0 {
 			continue
 		}

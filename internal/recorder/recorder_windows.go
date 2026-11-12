@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -57,35 +59,48 @@ type Options struct {
 }
 
 // megabits per second for a 1920 by 1080 picture at 60 per second.
-var qualityRates = [3]float64{6, 12, 20}
+var qualityRates = [3]float64{5, 10, 18}
 
-// Bitrate returns the average bits per second the options give for a
-// picture of the given size.
-func (o Options) Bitrate(width, height int) int {
+// Bitrate returns the average bits per second for a picture of the given
+// size and rate at the chosen quality.
+func (o Options) Bitrate(width, height, rate int) int {
 	q := min(max(o.Quality, 0), len(qualityRates)-1)
-	rate := qualityRates[q] * 1e6 * float64(width*height) / (1920 * 1080)
-	if o.Rate <= 30 {
-		rate *= 0.6
+	bits := qualityRates[q] * 1e6 * float64(width*height) / (1920 * 1080)
+	if rate <= 30 {
+		bits *= 0.6
 	}
-	return max(int(rate), 500_000)
+	return max(int(bits), 500_000)
 }
 
 // Memory estimates the most memory the loop will use, in bytes, for a
-// picture of the given size.
-func (o Options) Memory(width, height int) int {
-	rate := o.Bitrate(width, height)
+// screen of the given size.
+func (o Options) Memory(screenWidth, screenHeight int) int {
+	width, height := o.Size(screenWidth, screenHeight)
+	bits := o.Bitrate(width, height, o.Rate)
 	if o.Sound {
-		rate += soundBitrate
+		bits += soundBitrate
 	}
-	return int(float64(rate) / 8 * o.Window.Seconds())
+	return int(float64(bits) / 8 * o.Window.Seconds())
 }
 
-// Size returns the picture size the options give for a screen.
+// Size returns the picture size the options give for a screen. Hardware
+// encoders stop at about 4096 by 2160, so nothing larger is asked of them.
 func (o Options) Size(screenWidth, screenHeight int) (width, height int) {
-	width, height = screenWidth, screenHeight
-	if o.Height > 0 && height > o.Height {
-		width = width * o.Height / height
-		height = o.Height
+	limit := o.Height
+	if limit <= 0 || limit > 2160 {
+		limit = 2160
+	}
+	return within(screenWidth, screenHeight, 4096, limit)
+}
+
+// within scales a size down, keeping its shape, until it fits the limits.
+// Both results are even, as the video format requires.
+func within(width, height, maxWidth, maxHeight int) (int, int) {
+	if height > maxHeight {
+		width, height = width*maxHeight/height, maxHeight
+	}
+	if width > maxWidth {
+		width, height = maxWidth, height*maxWidth/width
 	}
 	return max(width&^1, 2), max(height&^1, 2)
 }
@@ -108,9 +123,11 @@ type Status struct {
 	Screen   string        // Windows name of the monitor being recorded
 	Width    int           // size of the recorded picture
 	Height   int           //
+	Rate     int           // pictures per second being recorded
 	Encoder  string        // name of the video encoder in use
 	Hardware bool          // whether it runs on the graphics chip
 	Pointer  bool          // whether the mouse pointer can be drawn
+	Rotated  bool          // the screen is turned; it is recorded as the panel sees it
 	Sound    bool          // whether sound is being recorded
 	Silent   string        // why not, in plain words, when it was asked for
 	Length   time.Duration // footage held
@@ -137,12 +154,13 @@ type Recorder struct {
 	status Status
 
 	frames, late atomic.Uint64
-	sound        atomic.Pointer[soundFormat] // set while sound is being recorded
+	sound        atomic.Pointer[soundFormat] // set once sound has been recorded
 
 	// Used only by the capture thread.
 	scratch  []byte
 	sps, pps []byte
 	lastOut  int64
+	avoid    map[string]int // encoders that failed soon after starting, and how often
 }
 
 // Start begins recording. It returns at once; progress is reported by
@@ -159,6 +177,7 @@ func Start(options Options) *Recorder {
 		ring:    ring.New(options.Window.Nanoseconds()/100, clock.Second/int64(options.Rate), 0),
 		epoch:   clock.Now(),
 		stop:    make(chan struct{}),
+		avoid:   map[string]int{},
 	}
 	r.done.Add(1)
 	go r.run()
@@ -213,6 +232,15 @@ var (
 	setThreadPriority = kernel32.NewProc("SetThreadPriority")
 )
 
+// fault marks a failure that came from the video encoder.
+type fault struct {
+	encoder string
+	err     error
+}
+
+func (f *fault) Error() string { return f.err.Error() }
+func (f *fault) Unwrap() error { return f.err }
+
 // run is the capture thread. It keeps a session going and starts a fresh
 // one when a session fails, so a driver update or a lost device is ridden
 // out without the user doing anything.
@@ -231,12 +259,25 @@ func (r *Recorder) run() {
 				s.State = Starting
 			}
 		})
+		began := time.Now()
 		err := r.session()
 		if r.stopped() {
 			return
 		}
 		if err != nil {
 			r.set(func(s *Status) { s.State, s.Problem = Failed, explain(err) })
+			// An encoder that breaks down soon after starting, twice, is
+			// passed over from then on in favour of the next one. That is
+			// how the recorder copes with hardware it has never met.
+			var broken *fault
+			lost := com.Code(err) == dx.ErrDeviceRemoved || com.Code(err) == dx.ErrDeviceReset
+			if errors.As(err, &broken) && !lost {
+				if time.Since(began) < 30*time.Second {
+					r.avoid[broken.encoder]++
+				} else {
+					r.avoid[broken.encoder] = 0
+				}
+			}
 		}
 		select {
 		case <-r.stop:
@@ -274,6 +315,7 @@ type pipeline struct {
 	encoder   *mf.Encoder
 	width     int // recorded picture size
 	height    int
+	rate      int // pictures per second
 }
 
 func (p *pipeline) close() {
@@ -313,8 +355,8 @@ func (p *pipeline) dropConverter() {
 	}
 }
 
-// open starts capturing the screen and prepares conversion from its size.
-func (p *pipeline) open(o Options, epoch int64) error {
+// attach starts capturing the screen.
+func (p *pipeline) attach(o Options, epoch int64) error {
 	var err error
 	if o.Source != nil {
 		p.screen, err = o.Source(p.device, epoch)
@@ -327,27 +369,40 @@ func (p *pipeline) open(o Options, epoch int64) error {
 	if err != nil {
 		return err
 	}
-	width, height := p.screen.Size()
-	if p.width == 0 {
-		p.width, p.height = o.Size(width, height)
+	// Windows reports the pointer in the coordinates of the desktop. On a
+	// turned screen those are not the coordinates of the picture, so the
+	// pointer is left out there. Without the painter the recording still
+	// works; it just has no pointer.
+	if o.Source != nil || !p.rotated() {
+		width, height := p.screen.Size()
+		p.painter, _ = p.device.NewPainter(width, height)
 	}
-	if p.converter == nil || p.converter.InWidth != width || p.converter.InHeight != height {
-		// First use, or the screen came back at another size. The recorded
-		// size stays what it was; the converter scales to it.
-		p.dropConverter()
-		if p.converter, err = p.device.NewConverter(width, height, p.width, p.height, o.Rate); err != nil {
+	return nil
+}
+
+// rotated reports whether the monitor is turned on its side or upside down.
+func (p *pipeline) rotated() bool { return p.output != nil && p.output.Rotation > 1 }
+
+// convert prepares conversion from the screen's size to the recorded size.
+func (p *pipeline) convert() error {
+	width, height := p.screen.Size()
+	if p.converter != nil && p.converter.InWidth == width && p.converter.InHeight == height {
+		return nil
+	}
+	// First use, or the screen came back at another size. The recorded size
+	// stays what it was; the converter scales to it.
+	p.dropConverter()
+	var err error
+	if p.converter, err = p.device.NewConverter(width, height, p.width, p.height, p.rate); err != nil {
+		return err
+	}
+	for i := 0; i < 6; i++ {
+		t, err := p.converter.NewTarget()
+		if err != nil {
 			return err
 		}
-		for i := 0; i < 6; i++ {
-			t, err := p.converter.NewTarget()
-			if err != nil {
-				return err
-			}
-			p.targets = append(p.targets, t)
-		}
+		p.targets = append(p.targets, t)
 	}
-	// Without the painter the recording still works; it just has no pointer.
-	p.painter, _ = p.device.NewPainter(width, height)
 	return nil
 }
 
@@ -374,6 +429,106 @@ func pick(adapters []*dx.Adapter, name string) (*dx.Adapter, *dx.Output) {
 	return dx.Primary(adapters)
 }
 
+// Monitor describes a screen that can be recorded.
+type Monitor struct {
+	Name          string // Windows' own name for it, as Options.Monitor takes it
+	Width, Height int
+	Main          bool
+	Adapter       string // the graphics chip it is plugged into
+	left          int32
+}
+
+// Monitors lists the screens that are connected, the main one first, then
+// from left to right.
+func Monitors() []Monitor {
+	adapters, err := dx.Adapters()
+	if err != nil {
+		return nil
+	}
+	var list []Monitor
+	for _, a := range adapters {
+		for _, o := range a.Outputs {
+			list = append(list, Monitor{
+				Name: o.Name, Width: o.Desktop.Width(), Height: o.Desktop.Height(),
+				Main: o.Desktop.Left == 0 && o.Desktop.Top == 0, Adapter: a.Name, left: o.Desktop.Left,
+			})
+		}
+		a.Close()
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Main != list[j].Main {
+			return list[i].Main
+		}
+		return list[i].left < list[j].left
+	})
+	return list
+}
+
+// choose starts a video encoder. It prefers the hardware encoder of the
+// chip that drives the screen, since that one reads pictures where they
+// already are, and falls back to the software encoder that every copy of
+// Windows has.
+func (r *Recorder) choose(p *pipeline, adapter *dx.Adapter) error {
+	o := r.options
+	var list []*mf.Codec
+	if !o.Software {
+		list, _ = mf.VideoEncoders(adapter.ID(), adapter.VendorID)
+	}
+	software, _ := mf.VideoEncoders(nil, 0)
+	list = append(list, software...)
+	defer func() {
+		for _, c := range list {
+			c.Release()
+		}
+	}()
+	usable := 0
+	for _, c := range list {
+		if r.avoid[c.Name] < 2 {
+			usable++
+		}
+	}
+	if usable == 0 {
+		clear(r.avoid) // every encoder has let us down: give them all another go
+	}
+	screenWidth, screenHeight := p.screen.Size()
+	var problems []string
+	for _, c := range list {
+		if r.avoid[c.Name] >= 2 {
+			continue
+		}
+		width, height := o.Size(screenWidth, screenHeight)
+		rate := o.Rate
+		if !c.Hardware {
+			// Compressing on the processor takes real work away from
+			// whatever else is running, so it is kept light.
+			width, height = within(width, height, 1280, 720)
+			rate = 30
+		}
+		sizes := [][2]int{{width, height}}
+		if width > 1920 || height > 1080 {
+			w, h := within(width, height, 1920, 1080)
+			sizes = append(sizes, [2]int{w, h}) // for an encoder that cannot go as large
+		}
+		for _, size := range sizes {
+			bitrate := o.Bitrate(size[0], size[1], rate)
+			config := mf.Config{
+				Width: size[0], Height: size[1], Rate: rate,
+				Bitrate: bitrate, Peak: bitrate * 3 / 2, KeyInterval: rate * int(keyGap/clock.Second),
+			}
+			encoder, err := c.Open(p.device.Object, config)
+			if err == nil {
+				p.encoder, p.width, p.height, p.rate = encoder, size[0], size[1], rate
+				// Never hold more than the encoder's peak rate could fill.
+				r.ring.SetLimit(int(float64(config.Peak+soundBitrate) / 8 * o.Window.Seconds()))
+				r.ring.SetFrame(clock.Second / int64(rate))
+				return nil
+			}
+			problems = append(problems, err.Error())
+		}
+	}
+	return fmt.Errorf("No video encoder could be started (%s).", strings.Join(problems, "; "))
+}
+
 // session records until stopped or until something breaks.
 func (r *Recorder) session() error {
 	o := r.options
@@ -395,46 +550,28 @@ func (r *Recorder) session() error {
 	if p.device, err = dx.NewDevice(adapter); err != nil {
 		return err
 	}
-	if err := p.open(o, r.epoch); err != nil {
+	if err := p.attach(o, r.epoch); err != nil {
 		return err
 	}
-
-	bitrate := o.Bitrate(p.width, p.height)
-	config := mf.Config{
-		Width: p.width, Height: p.height, Rate: o.Rate,
-		Bitrate: bitrate, Peak: bitrate * 3 / 2, KeyInterval: o.Rate * int(keyGap/clock.Second),
+	if err := r.choose(p, adapter); err != nil {
+		return err
 	}
-	var codecs []*mf.Codec
-	if !o.Software {
-		codecs, _ = mf.VideoEncoders(adapter.ID())
-	}
-	software, _ := mf.VideoEncoders(nil)
-	var problems []string
-	for _, codec := range append(codecs, software...) {
-		if p.encoder == nil {
-			if p.encoder, err = codec.Open(p.device.Object, config); err != nil {
-				problems = append(problems, err.Error())
-			}
-		}
-		codec.Release()
-	}
-	if p.encoder == nil {
-		return fmt.Errorf("No video encoder could be started (%v).", problems)
+	if err := p.convert(); err != nil {
+		return err
 	}
 	if header := p.encoder.Header(); header != nil {
 		_, picture := h264.Convert(nil, header)
 		r.parameters(picture)
 	}
-	// Never hold more than the encoder's peak rate could fill.
-	r.ring.SetLimit(int(float64(config.Peak+soundBitrate) / 8 * o.Window.Seconds()))
+	broken := func(err error) error { return &fault{encoder: p.encoder.Name, err: err} }
 	r.set(func(s *Status) {
 		s.State, s.Problem = Recording, ""
-		s.Screen, s.Width, s.Height = output.Name, p.width, p.height
+		s.Screen, s.Width, s.Height, s.Rate = output.Name, p.width, p.height, p.rate
 		s.Encoder, s.Hardware = p.encoder.Name, p.encoder.Hardware
-		s.Pointer = p.painter != nil
+		s.Pointer, s.Rotated = p.painter != nil, p.rotated() && o.Source == nil
 	})
 
-	interval := clock.Second / int64(o.Rate)
+	interval := clock.Second / int64(p.rate)
 	// At each tick the thread asks for the newest picture and is willing to
 	// wait most of a tick for one. A still screen costs nothing: the thread
 	// sleeps inside that wait.
@@ -450,13 +587,17 @@ func (r *Recorder) session() error {
 		tick, _ := ticker.Wait()
 		at := tick - r.epoch
 		if err := p.encoder.Collect(r.take); err != nil {
-			return err
+			return broken(err)
 		}
 
 		if p.screen == nil && tick >= retry {
 			// The screen went away: a mode change, the lock screen, a
 			// security prompt. Try to get it back twice a second.
-			if err := p.open(o, r.epoch); err != nil {
+			err := p.attach(o, r.epoch)
+			if err == nil {
+				err = p.convert()
+			}
+			if err != nil {
 				p.dropScreen()
 				retry = tick + clock.Second/2
 				if failures++; failures > 20 && com.Code(err) != dx.ErrAccessDenied {
@@ -465,7 +606,7 @@ func (r *Recorder) session() error {
 				r.set(func(s *Status) { s.State, s.Problem = Waiting, explain(err) })
 			} else {
 				failures = 0
-				r.set(func(s *Status) { s.State, s.Problem = Recording, "" })
+				r.set(func(s *Status) { s.State, s.Problem, s.Pointer = Recording, "", p.painter != nil })
 			}
 		}
 		if p.screen != nil && !pending {
@@ -495,7 +636,7 @@ func (r *Recorder) session() error {
 		}
 		ready, err := p.encoder.Accepting()
 		if err != nil {
-			return err
+			return broken(err)
 		}
 		target := p.last
 		if pending {
@@ -507,8 +648,8 @@ func (r *Recorder) session() error {
 			if pending {
 				r.late.Add(1)
 			}
-			if refused++; refused > 3*o.Rate {
-				return errors.New("The video encoder stopped responding.")
+			if refused++; refused > 3*p.rate {
+				return broken(errors.New("The video encoder stopped responding."))
 			}
 			continue
 		}
@@ -522,7 +663,7 @@ func (r *Recorder) session() error {
 		}
 		key := at-lastKey >= keyGap
 		if err := p.encoder.Submit(target.Texture, at, interval, key); err != nil {
-			return err
+			return broken(err)
 		}
 		if key {
 			lastKey = at
