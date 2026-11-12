@@ -134,6 +134,13 @@ func record() {
 		Sound:    option("sound", 0) == 1,
 		Software: option("software", 0) == 1,
 	}
+	// monitor=2 picks the second screen of the list without its Windows name
+	// having to survive a command line.
+	if n := option("monitor", 0); n > 0 {
+		if list := recorder.Monitors(); n <= len(list) {
+			options.Monitor = list[n-1].Name
+		}
+	}
 	if option("card", 0) == 1 {
 		width, height, still := option("width", 1920), option("screen", 1080), option("still", 0)
 		timed := option("clock", 0) == 1
@@ -150,6 +157,7 @@ func record() {
 		options.Sound = true
 		options.SoundSource = func(epoch int64) (audio.Input, error) { return &clicker{epoch: epoch}, nil }
 	}
+	dx.PreferProcessor = option("processor", 0) == 1
 	r := recorder.Start(options)
 	for i := 0; i < seconds; i++ {
 		if i == 1 && option("tone", 0) == 1 {
@@ -160,6 +168,18 @@ func record() {
 		fmt.Printf("%2ds state=%d %dx%d %q hardware=%v pointer=%v sound=%v held=%.1fs %d KB frames=%d late=%d %s %s\n",
 			i+1, s.State, s.Width, s.Height, s.Encoder, s.Hardware, s.Pointer, s.Sound, s.Length.Seconds(), s.Bytes/1024, s.Frames, s.Late, s.Problem, s.Silent)
 	}
+	if frames := recorder.Profile[6].Load(); frames > 0 {
+		names := []string{"collect", "fetch (with waiting)", "pointer", "convert", "hand over", "flush"}
+		line := "capture thread, ms per picture:"
+		for i, name := range names {
+			line += fmt.Sprintf(" %s %.3f,", name, float64(recorder.Profile[i].Load())/1e4/float64(frames))
+		}
+		fmt.Println(line)
+		fmt.Printf("processor time used by the capture thread: %.2f s, %.3f ms per picture\n",
+			float64(recorder.Profile[7].Load())/1e7, float64(recorder.Profile[7].Load())/1e4/float64(frames))
+	}
+	used, peak := usage()
+	fmt.Printf("processor time used by this process: %.2f s over %d s, %.1f%% of one core; peak memory %d MB\n", used, seconds, 100*used/float64(seconds), peak>>20)
 	began := time.Now()
 	clip, err := r.Save(text("out", "probe.mp4"))
 	if err != nil {

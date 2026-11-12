@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"lazareplay/internal/dx"
 	"lazareplay/internal/h264"
 	"lazareplay/internal/mf"
+	"lazareplay/internal/nvenc"
 	"lazareplay/internal/ring"
 )
 
@@ -232,6 +234,25 @@ var (
 	setThreadPriority = kernel32.NewProc("SetThreadPriority")
 )
 
+// Profile adds up, in 100 ns units, where the capture thread spends its
+// time: collecting from the encoder, fetching the picture (which includes
+// waiting for one), drawing the pointer, converting, handing over to the
+// encoder, and flushing. The seventh entry counts pictures and the eighth is
+// the processor time the capture thread has used. It is filled only when
+// the environment variable LAZAREPLAY_PROFILE is set.
+var Profile [8]atomic.Int64
+
+var profiling = os.Getenv("LAZAREPLAY_PROFILE") != ""
+
+// lap adds the time since *from to a phase and moves *from to now.
+func lap(phase int, from *int64) {
+	if profiling {
+		now := clock.Now()
+		Profile[phase].Add(now - *from)
+		*from = now
+	}
+}
+
 // fault marks a failure that came from the video encoder.
 type fault struct {
 	encoder string
@@ -302,6 +323,39 @@ func explain(err error) string {
 	return err.Error()
 }
 
+// videoEncoder is what the recorder needs of a video encoder. Two kinds
+// stand behind it: the encoders Windows offers through Media Foundation,
+// and NVIDIA's own, driven directly.
+type videoEncoder interface {
+	Label() string  // its name, for the status
+	OnChip() bool   // whether it runs on the graphics chip
+	Header() []byte // parameter sets known before the first picture, if any
+	Accepting() (bool, error)
+	Free(t *dx.Target) bool // whether the encoder has finished reading a texture
+	Submit(texture unsafe.Pointer, time, duration int64, key bool) error
+	Collect(take func(data []byte, time int64)) error
+	Close()
+}
+
+// foundation adapts a Media Foundation encoder. It holds a reference on a
+// texture for as long as it reads it.
+type foundation struct{ *mf.Encoder }
+
+func (f foundation) Label() string          { return f.Name }
+func (f foundation) OnChip() bool           { return f.Hardware }
+func (f foundation) Free(t *dx.Target) bool { return t.Idle() }
+
+// direct adapts NVIDIA's encoder, which keeps its own list of the textures
+// it is reading.
+type direct struct{ *nvenc.Encoder }
+
+const directName = "NVIDIA NVENC H.264 Encoder"
+
+func (d direct) Label() string          { return directName }
+func (d direct) OnChip() bool           { return true }
+func (d direct) Header() []byte         { return nil }
+func (d direct) Free(t *dx.Target) bool { return !d.Holding(t.Texture) }
+
 // pipeline holds what one session uses.
 type pipeline struct {
 	device    *dx.Device
@@ -312,7 +366,7 @@ type pipeline struct {
 	targets   []*dx.Target
 	last      *dx.Target // the latest converted picture
 	next      int
-	encoder   *mf.Encoder
+	encoder   videoEncoder
 	width     int // recorded picture size
 	height    int
 	rate      int // pictures per second
@@ -410,7 +464,7 @@ func (p *pipeline) convert() error {
 func (p *pipeline) free() *dx.Target {
 	for range p.targets {
 		p.next = (p.next + 1) % len(p.targets)
-		if t := p.targets[p.next]; t.Idle() {
+		if t := p.targets[p.next]; p.encoder.Free(t) {
 			return t
 		}
 	}
@@ -470,17 +524,45 @@ func Monitors() []Monitor {
 // Windows has.
 func (r *Recorder) choose(p *pipeline, adapter *dx.Adapter) error {
 	o := r.options
-	var list []*mf.Codec
+	// candidate is an encoder that could be started.
+	type candidate struct {
+		Name     string
+		Hardware bool
+		Open     func(config mf.Config) (videoEncoder, error)
+	}
+	var list []candidate
+	var codecs []*mf.Codec
 	if !o.Software {
-		list, _ = mf.VideoEncoders(adapter.ID(), adapter.VendorID)
+		if adapter.VendorID == 0x10DE && nvenc.Available() {
+			// NVIDIA's encoder, reached directly. It is tried before the
+			// one Windows lists because that one fails to start on some
+			// machines, laptops with two graphics chips among them.
+			list = append(list, candidate{directName, true, func(c mf.Config) (videoEncoder, error) {
+				e, err := nvenc.Open(p.device.Object, nvenc.Config{Width: c.Width, Height: c.Height, Rate: c.Rate, Bitrate: c.Bitrate, Peak: c.Peak})
+				if err != nil {
+					return nil, err
+				}
+				return direct{e}, nil
+			}})
+		}
+		codecs, _ = mf.VideoEncoders(adapter.ID(), adapter.VendorID)
 	}
 	software, _ := mf.VideoEncoders(nil, 0)
-	list = append(list, software...)
+	codecs = append(codecs, software...)
 	defer func() {
-		for _, c := range list {
+		for _, c := range codecs {
 			c.Release()
 		}
 	}()
+	for _, c := range codecs {
+		list = append(list, candidate{c.Name, c.Hardware, func(config mf.Config) (videoEncoder, error) {
+			e, err := c.Open(p.device.Object, config)
+			if err != nil {
+				return nil, err
+			}
+			return foundation{e}, nil
+		}})
+	}
 	usable := 0
 	for _, c := range list {
 		if r.avoid[c.Name] < 2 {
@@ -515,7 +597,7 @@ func (r *Recorder) choose(p *pipeline, adapter *dx.Adapter) error {
 				Width: size[0], Height: size[1], Rate: rate,
 				Bitrate: bitrate, Peak: bitrate * 3 / 2, KeyInterval: rate * int(keyGap/clock.Second),
 			}
-			encoder, err := c.Open(p.device.Object, config)
+			encoder, err := c.Open(config)
 			if err == nil {
 				p.encoder, p.width, p.height, p.rate = encoder, size[0], size[1], rate
 				// Never hold more than the encoder's peak rate could fill.
@@ -563,11 +645,11 @@ func (r *Recorder) session() error {
 		_, picture := h264.Convert(nil, header)
 		r.parameters(picture)
 	}
-	broken := func(err error) error { return &fault{encoder: p.encoder.Name, err: err} }
+	broken := func(err error) error { return &fault{encoder: p.encoder.Label(), err: err} }
 	r.set(func(s *Status) {
 		s.State, s.Problem = Recording, ""
 		s.Screen, s.Width, s.Height, s.Rate = output.Name, p.width, p.height, p.rate
-		s.Encoder, s.Hardware = p.encoder.Name, p.encoder.Hardware
+		s.Encoder, s.Hardware = p.encoder.Label(), p.encoder.OnChip()
 		s.Pointer, s.Rotated = p.painter != nil, p.rotated() && o.Source == nil
 	})
 
@@ -586,9 +668,11 @@ func (r *Recorder) session() error {
 	for !r.stopped() {
 		tick, _ := ticker.Wait()
 		at := tick - r.epoch
+		mark := clock.Now()
 		if err := p.encoder.Collect(r.take); err != nil {
 			return broken(err)
 		}
+		lap(0, &mark)
 
 		if p.screen == nil && tick >= retry {
 			// The screen went away: a mode change, the lock screen, a
@@ -611,6 +695,7 @@ func (r *Recorder) session() error {
 		}
 		if p.screen != nil && !pending {
 			changed, err := p.screen.Acquire(wait)
+			lap(1, &mark)
 			switch com.Code(err) {
 			case 0:
 				if err != nil {
@@ -642,7 +727,7 @@ func (r *Recorder) session() error {
 		if pending {
 			target = p.free()
 		}
-		if !ready || target == nil || !target.Idle() {
+		if !ready || target == nil || !p.encoder.Free(target) {
 			// The encoder is still busy. The picture stays held and is
 			// offered again on the next tick; nothing is lost, it is late.
 			if pending {
@@ -654,22 +739,34 @@ func (r *Recorder) session() error {
 			continue
 		}
 		refused = 0
+		mark = clock.Now()
 		if pending {
 			picture := p.painter.Paint(p.screen.Texture(), p.screen.Pointer())
+			lap(2, &mark)
 			if err := p.converter.Convert(picture, target); err != nil {
 				return err
 			}
+			lap(3, &mark)
 			p.last, pending = target, false
 		}
 		key := at-lastKey >= keyGap
 		if err := p.encoder.Submit(target.Texture, at, interval, key); err != nil {
 			return broken(err)
 		}
+		lap(4, &mark)
 		if key {
 			lastKey = at
 		}
 		lastSubmit = at
 		p.device.Flush()
+		lap(5, &mark)
+		if profiling && Profile[6].Add(1)%30 == 0 {
+			var created, exited, inKernel, inUser int64
+			thread, _, _ := getCurrentThread.Call()
+			kernel32.NewProc("GetThreadTimes").Call(thread, uintptr(unsafe.Pointer(&created)), uintptr(unsafe.Pointer(&exited)),
+				uintptr(unsafe.Pointer(&inKernel)), uintptr(unsafe.Pointer(&inUser)))
+			Profile[7].Store(inKernel + inUser)
+		}
 		r.frames.Add(1)
 	}
 	return nil

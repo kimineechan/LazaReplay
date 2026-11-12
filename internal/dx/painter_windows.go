@@ -19,9 +19,10 @@ var (
 	compile  = compiler.NewProc("D3DCompile")
 )
 
-// One small program draws a textured rectangle that fills the viewport. The
-// viewport is set to where the pointer is, so no position needs passing in.
-const pointerShader = `
+// quadShader is the part shared by every program run on the graphics chip
+// here: it places the four corners of a rectangle that fills the viewport,
+// so where something is drawn is chosen by setting the viewport alone.
+const quadShader = `
 struct Corner { float4 position : SV_Position; float2 uv : TEXCOORD0; };
 
 Corner vertex(uint id : SV_VertexID) {
@@ -31,7 +32,10 @@ Corner vertex(uint id : SV_VertexID) {
 	c.uv = at;
 	return c;
 }
+`
 
+// pointerShader copies the picture of the pointer, pixel for pixel.
+const pointerShader = quadShader + `
 Texture2D image : register(t0);
 
 float4 pixel(Corner c) : SV_Target {
@@ -92,8 +96,8 @@ func (d *Device) NewPainter(width, height int) (*Painter, error) {
 	if p.lock, err = com.Query(d.Context, &iidMultithread); err != nil {
 		return nil, err
 	}
-	if p.vertex, err = p.shader("vertex", "vs_4_0", 12); err == nil {
-		p.pixel, err = p.shader("pixel", "ps_4_0", 15)
+	if p.vertex, err = d.compile(pointerShader, "vertex", "vs_4_0", 12); err == nil {
+		p.pixel, err = d.compile(pointerShader, "pixel", "ps_4_0", 15)
 	}
 	if err != nil {
 		p.Close()
@@ -125,12 +129,14 @@ func (d *Device) NewPainter(width, height int) (*Painter, error) {
 	return p, nil
 }
 
-// shader compiles one function of the program and creates the shader.
-func (p *Painter) shader(entry, model string, create int) (unsafe.Pointer, error) {
+// compile turns one function of a program into a shader the chip can run.
+// create is the position of the device method that makes that kind of
+// shader: 12 for one that places corners, 15 for one that colours pixels.
+func (d *Device) compile(program, entry, model string, create int) (unsafe.Pointer, error) {
 	if err := compile.Find(); err != nil {
 		return nil, errors.New("the shader compiler of Windows is missing")
 	}
-	source := []byte(pointerShader)
+	source := []byte(program)
 	name, target := append([]byte(entry), 0), append([]byte(model), 0)
 	var code, messages unsafe.Pointer
 	hr, _, _ := compile.Call(uintptr(unsafe.Pointer(&source[0])), uintptr(len(source)), 0, 0, 0,
@@ -142,7 +148,7 @@ func (p *Painter) shader(entry, model string, create int) (unsafe.Pointer, error
 	}
 	defer com.Release(&code)
 	var shader unsafe.Pointer
-	hr = com.Call(p.device.Object, create, com.Call(code, 3), com.Call(code, 4), 0, uintptr(unsafe.Pointer(&shader)))
+	hr = com.Call(d.Object, create, com.Call(code, 3), com.Call(code, 4), 0, uintptr(unsafe.Pointer(&shader)))
 	return shader, com.Check("CreateShader", hr)
 }
 
@@ -195,6 +201,7 @@ func (p *Painter) Paint(frame unsafe.Pointer, pointer Pointer) unsafe.Pointer {
 	com.Call(ctx, 44, 1, uintptr(unsafe.Pointer(&viewport)))    // RSSetViewports
 	com.Call(ctx, 24, 5)                                        // IASetPrimitiveTopology: triangle strip
 	com.Call(ctx, 17, 0)                                        // IASetInputLayout: none
+	com.Call(ctx, 43, 0)                                        // RSSetState: default
 	com.Call(ctx, 11, uintptr(p.vertex), 0, 0)                  // VSSetShader
 	com.Call(ctx, 9, uintptr(p.pixel), 0, 0)                    // PSSetShader
 	for _, pass := range [2]struct{ view, blend unsafe.Pointer }{{p.colour, p.over}, {p.mask, p.invert}} {
