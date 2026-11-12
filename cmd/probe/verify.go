@@ -29,8 +29,10 @@ func verify() {
 	pointers := option("pointers", 0) == 1
 	scale := float64(option("scale", 100)) / 100 // recorded size over screen size
 
+	timed := option("clock", 0) == 1 // the card shows milliseconds, not a frame count
 	var numbers []int
-	var times []int64
+	var times, lampOn, origins []int64
+	lampLit := false
 	unread := 0
 	worstBar, worstSpot, worstBlock := 0.0, 0.0, 0.0
 	worstSpotName := ""
@@ -55,12 +57,26 @@ func verify() {
 			return testcard.Colour{Y: float64(data[y*stride+x]), Cb: float64(c[0]), Cr: float64(c[1])}
 		}
 		times = append(times, at)
+		lx, ly := testcard.LampCentre()
+		if level := luma(lx, ly); level > 190 && !lampLit {
+			lampLit = true
+			if len(times) > 1 {
+				lampOn = append(lampOn, at)
+			}
+		} else if level < 60 {
+			lampLit = false
+		}
 		n, ok := testcard.Number(luma)
 		if !ok {
 			unread++
 			continue
 		}
 		numbers = append(numbers, n)
+		if timed {
+			// The picture says when it was taken; the file says when it is
+			// shown. The difference is the moment the clip begins.
+			origins = append(origins, int64(n)*10000-at)
+		}
 		for i := range testcard.Bars {
 			if pointers && i < 3 {
 				continue // checked point by point below
@@ -117,6 +133,8 @@ func verify() {
 		return
 	}
 	var samples, peak int
+	var clicks, peaks []int64
+	loudest := 0
 	var energy float64
 	var first, last int64 = -1, 0
 	for {
@@ -138,10 +156,76 @@ func verify() {
 				v = -v
 			}
 			peak = max(peak, v)
+			if v > 6000 {
+				when := at + int64(i/2/max(channels, 1))*1e7/int64(max(rate, 1))
+				if len(clicks) == 0 || when-clicks[len(clicks)-1] > 1e6 {
+					clicks = append(clicks, when)
+					loudest = 0
+				}
+				if v > loudest {
+					loudest = v
+					if len(peaks) < len(clicks) {
+						peaks = append(peaks, when)
+					} else {
+						peaks[len(peaks)-1] = when
+					}
+				}
+			}
 			samples++
 		}
 	}
 	frames := samples / max(channels, 1)
 	fmt.Printf("sound: %d Hz, %d channels, %.3f s, starts at %.1f ms, last block at %.3f s, peak %d of 32767, average level %.1f\n",
 		rate, channels, float64(frames)/float64(max(rate, 1)), ms(first), float64(last)/1e7, peak, math.Sqrt(energy/float64(max(samples, 1))))
+	if len(clicks) > 0 {
+		line := "clicks heard at, in seconds:"
+		for _, click := range clicks {
+			line += fmt.Sprintf(" %.4f", float64(click)/1e7)
+		}
+		fmt.Println(line)
+	}
+	if timed && len(origins) > 0 && len(peaks) > 0 {
+		// Each click was made exactly on a whole second. Where the clip
+		// begins is known from the pictures, so where each click should be
+		// heard in the file is known too.
+		sort.Slice(origins, func(i, j int) bool { return origins[i] < origins[j] })
+		origin := origins[len(origins)/2]
+		var early []int64
+		line := "sound later than it should be, in ms (start of click / loudest point):"
+		for i := range peaks {
+			second := (clicks[i] + origin + 5e6) / 1e7 * 1e7
+			line += fmt.Sprintf(" %+.1f/%+.1f", ms(clicks[i]+origin-second), ms(peaks[i]+origin-second))
+			early = append(early, peaks[i]+origin-second)
+		}
+		sort.Slice(early, func(i, j int) bool { return early[i] < early[j] })
+		fmt.Println(line)
+		fmt.Printf("pictures disagree about the start of the clip by at most %.1f ms; middle click is %+.1f ms from its second\n",
+			ms(origins[len(origins)-1]-origins[0]), ms(early[len(early)/2]))
+		return
+	}
+	if len(clicks) > 0 && len(lampOn) > 0 {
+		// Pair each time the lamp came on with the nearest click.
+		var gaps []int64
+		line := "picture minus sound, in ms:"
+		for _, lit := range lampOn {
+			best := int64(math.MaxInt64)
+			for _, click := range clicks {
+				if d := lit - click; abs(d) < abs(best) {
+					best = d
+				}
+			}
+			gaps = append(gaps, best)
+			line += fmt.Sprintf(" %+.1f", ms(best))
+		}
+		sort.Slice(gaps, func(i, j int) bool { return gaps[i] < gaps[j] })
+		fmt.Println(line)
+		fmt.Printf("%d lamp flashes, %d clicks; in the middle case the picture is %+.1f ms from the sound\n", len(lampOn), len(clicks), ms(gaps[len(gaps)/2]))
+	}
+}
+
+func abs(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

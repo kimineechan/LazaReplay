@@ -49,6 +49,8 @@ func main() {
 		record()
 	case "verify":
 		verify()
+	case "serve":
+		serve()
 	default:
 		fmt.Println("unknown mode", mode)
 	}

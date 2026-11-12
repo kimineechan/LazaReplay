@@ -139,6 +139,18 @@ func Create(class, iid *GUID) (unsafe.Pointer, error) {
 // Text converts a NUL-terminated UTF-16 buffer to a string.
 func Text(units []uint16) string { return syscall.UTF16ToString(units) }
 
+// String reads a NUL-terminated UTF-16 string that Windows returned.
+func String(p *uint16) string {
+	if p == nil {
+		return ""
+	}
+	n := 0
+	for *(*uint16)(unsafe.Add(unsafe.Pointer(p), n*2)) != 0 {
+		n++
+	}
+	return syscall.UTF16ToString(unsafe.Slice(p, n))
+}
+
 // Wide converts a string to a NUL-terminated UTF-16 pointer.
 func Wide(s string) *uint16 {
 	p, _ := syscall.UTF16PtrFromString(s)

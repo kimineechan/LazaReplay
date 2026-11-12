@@ -20,6 +20,8 @@ const (
 	blockSize       = 40
 	blockStep       = 4
 	backgroundLevel = 128
+	lampX, lampY    = 480, 246
+	lampSize        = 32
 )
 
 // Bars are the colours of the bars from left to right, as red, green, blue.
@@ -60,6 +62,25 @@ func PaintAt(pixels []byte, stride, left, top, n int, all bool) {
 	x := BlockX(n)
 	fill(x, blockY, x+blockSize, blockY+blockSize, 255, 255, 255)
 }
+
+// Lamp draws the lamp of the card lit or dark. The self-test lights it for
+// the first half of every second, and plays a click at the start of every
+// second, to check that sound and picture stay in step.
+func Lamp(pixels []byte, stride int, lit bool) {
+	level := byte(0)
+	if lit {
+		level = 255
+	}
+	for y := Y + lampY; y < Y+lampY+lampSize; y++ {
+		row := pixels[y*stride+(X+lampX)*4 : y*stride+(X+lampX+lampSize)*4]
+		for i := 0; i < len(row); i += 4 {
+			row[i], row[i+1], row[i+2], row[i+3] = level, level, level, 255
+		}
+	}
+}
+
+// LampCentre returns the middle of the lamp in picture coordinates.
+func LampCentre() (x, y int) { return X + lampX + lampSize/2, Y + lampY + lampSize/2 }
 
 // BlockX returns where the moving square is in frame n, relative to the card.
 func BlockX(n int) int { return n * blockStep % (Width - blockSize) }

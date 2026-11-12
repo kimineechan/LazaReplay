@@ -5,6 +5,7 @@ package testcard
 import (
 	"unsafe"
 
+	"lazareplay/internal/clock"
 	"lazareplay/internal/com"
 	"lazareplay/internal/dx"
 )
@@ -24,6 +25,13 @@ type Source struct {
 	// Still makes the source stop changing after this many frames, to
 	// exercise what the recorder does with a screen that stands still.
 	Still int
+	// Epoch, when set, lights the lamp for the first half of every second
+	// counted from that time.
+	Epoch int64
+	// Clock makes the card show the time since Epoch in milliseconds in
+	// place of the frame number, so that a recording says exactly when
+	// each of its pictures was taken.
+	Clock bool
 }
 
 // NewSource makes a source of the given picture size.
@@ -48,7 +56,14 @@ func (s *Source) Acquire(wait uint32) (bool, error) {
 	if s.Still > 0 && s.next >= s.Still {
 		return false, nil
 	}
-	Paint(s.pixels, s.width*4, s.next, false)
+	number := s.next
+	if s.Clock {
+		number = int((clock.Now()-s.Epoch)/10000) & 0xFFFF
+	}
+	Paint(s.pixels, s.width*4, number, false)
+	if s.Epoch != 0 {
+		Lamp(s.pixels, s.width*4, (clock.Now()-s.Epoch)%clock.Second < clock.Second/2)
+	}
 	s.device.Update(s.texture, s.pixels, s.width*4)
 	s.next++
 	return true, nil

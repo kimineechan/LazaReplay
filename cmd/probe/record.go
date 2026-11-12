@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"lazareplay/internal/audio"
 	"lazareplay/internal/dx"
 	"lazareplay/internal/recorder"
 	"lazareplay/internal/testcard"
@@ -135,21 +136,26 @@ func record() {
 	}
 	if option("card", 0) == 1 {
 		width, height, still := option("width", 1920), option("screen", 1080), option("still", 0)
-		options.Source = func(device *dx.Device) (recorder.Screen, error) {
+		timed := option("clock", 0) == 1
+		options.Source = func(device *dx.Device, epoch int64) (recorder.Screen, error) {
 			source, err := testcard.NewSource(device, width, height)
 			if err != nil {
 				return nil, err
 			}
-			source.Still = still
+			source.Still, source.Epoch, source.Clock = still, epoch, timed
 			return pointed{source}, nil
 		}
+	}
+	if option("clicks", 0) == 1 {
+		options.Sound = true
+		options.SoundSource = func(epoch int64) (audio.Input, error) { return &clicker{epoch: epoch}, nil }
 	}
 	r := recorder.Start(options)
 	for i := 0; i < seconds; i++ {
 		time.Sleep(time.Second)
 		s := r.Status()
-		fmt.Printf("%2ds state=%d %dx%d %q hardware=%v pointer=%v sound=%v held=%.1fs %d KB frames=%d late=%d %s\n",
-			i+1, s.State, s.Width, s.Height, s.Encoder, s.Hardware, s.Pointer, s.Sound, s.Length.Seconds(), s.Bytes/1024, s.Frames, s.Late, s.Problem)
+		fmt.Printf("%2ds state=%d %dx%d %q hardware=%v pointer=%v sound=%v held=%.1fs %d KB frames=%d late=%d %s %s\n",
+			i+1, s.State, s.Width, s.Height, s.Encoder, s.Hardware, s.Pointer, s.Sound, s.Length.Seconds(), s.Bytes/1024, s.Frames, s.Late, s.Problem, s.Silent)
 	}
 	began := time.Now()
 	clip, err := r.Save(text("out", "probe.mp4"))

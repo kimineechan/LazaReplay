@@ -16,6 +16,7 @@ import (
 	"time"
 	"unsafe"
 
+	"lazareplay/internal/audio"
 	"lazareplay/internal/clock"
 	"lazareplay/internal/com"
 	"lazareplay/internal/dx"
@@ -45,9 +46,12 @@ type Options struct {
 	Monitor string        // Windows name of the monitor; "" for the main screen
 	Sound   bool          // also record what the computer plays
 
-	// Source, when set, supplies the pictures in place of a monitor. The
-	// self-test uses it to record a picture it can check.
-	Source func(*dx.Device) (Screen, error)
+	// Source, when set, supplies the pictures in place of a monitor, and
+	// SoundSource the sound in place of what the computer plays. The
+	// self-test uses them to record material it can check. Both are given
+	// the time that counts as zero for the recording.
+	Source      func(device *dx.Device, epoch int64) (Screen, error)
+	SoundSource func(epoch int64) (audio.Input, error)
 	// Software forces the encoder that runs on the processor, for testing.
 	Software bool
 }
@@ -108,6 +112,7 @@ type Status struct {
 	Hardware bool          // whether it runs on the graphics chip
 	Pointer  bool          // whether the mouse pointer can be drawn
 	Sound    bool          // whether sound is being recorded
+	Silent   string        // why not, in plain words, when it was asked for
 	Length   time.Duration // footage held
 	Bytes    int           // memory it takes
 	Frames   uint64        // pictures recorded since the start
@@ -157,6 +162,10 @@ func Start(options Options) *Recorder {
 	}
 	r.done.Add(1)
 	go r.run()
+	if options.Sound {
+		r.done.Add(1)
+		go r.listen()
+	}
 	return r
 }
 
@@ -305,10 +314,10 @@ func (p *pipeline) dropConverter() {
 }
 
 // open starts capturing the screen and prepares conversion from its size.
-func (p *pipeline) open(o Options) error {
+func (p *pipeline) open(o Options, epoch int64) error {
 	var err error
 	if o.Source != nil {
-		p.screen, err = o.Source(p.device)
+		p.screen, err = o.Source(p.device, epoch)
 	} else {
 		var dup *dx.Duplication
 		if dup, err = p.device.Duplicate(p.output); err == nil {
@@ -386,7 +395,7 @@ func (r *Recorder) session() error {
 	if p.device, err = dx.NewDevice(adapter); err != nil {
 		return err
 	}
-	if err := p.open(o); err != nil {
+	if err := p.open(o, r.epoch); err != nil {
 		return err
 	}
 
@@ -447,7 +456,7 @@ func (r *Recorder) session() error {
 		if p.screen == nil && tick >= retry {
 			// The screen went away: a mode change, the lock screen, a
 			// security prompt. Try to get it back twice a second.
-			if err := p.open(o); err != nil {
+			if err := p.open(o, r.epoch); err != nil {
 				p.dropScreen()
 				retry = tick + clock.Second/2
 				if failures++; failures > 20 && com.Code(err) != dx.ErrAccessDenied {
