@@ -185,3 +185,60 @@ func TestUnknownTimes(t *testing.T) {
 		t.Fatalf("times %v", times)
 	}
 }
+
+func TestCutLinesUpASecondRunOfSound(t *testing.T) {
+	const frame = Second / 1000 // one frame at 1000 a second
+	line := NewTimeline(1000, 1)
+	if got := line.Cut(5*Second, 3); len(got) != 3 || got[0] != 0 || got[2] != 0 {
+		t.Fatalf("before any sound has arrived the span should be silence, got %v", got)
+	}
+	line.Add([]int16{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, Second)
+	if !line.Covers(Second+10*frame) || line.Covers(Second+11*frame) {
+		t.Fatal("ten frames from one second should cover exactly up to ten frames later")
+	}
+	// A span that starts three frames in: the first three are thrown away.
+	if got := line.Cut(Second+3*frame, 4); got[0] != 4 || got[3] != 7 {
+		t.Fatalf("got %v, want 4 5 6 7", got)
+	}
+	// The next span carries on, and is silence where the sound runs out.
+	if got := line.Cut(Second+7*frame, 4); got[0] != 8 || got[2] != 10 || got[3] != 0 {
+		t.Fatalf("got %v, want 8 9 10 0", got)
+	}
+	// A span that starts before the sound does is silence up to it.
+	late := NewTimeline(1000, 1)
+	late.Add([]int16{1, 2, 3}, Second)
+	if got := late.Cut(Second-2*frame, 4); got[0] != 0 || got[1] != 0 || got[2] != 1 || got[3] != 2 {
+		t.Fatalf("got %v, want 0 0 1 2", got)
+	}
+	if got := late.Cut(Second+2*frame, 2); got[0] != 3 || got[1] != 0 {
+		t.Fatalf("got %v, want 3 0", got)
+	}
+	// Sound that is wholly too old is dropped and gives silence.
+	old := NewTimeline(1000, 2)
+	old.Add([]int16{1, 1, 2, 2}, Second)
+	if got := old.Cut(3*Second, 2); len(got) != 4 || got[0] != 0 || got[3] != 0 {
+		t.Fatalf("got %v, want silence", got)
+	}
+}
+
+func TestReadySaysWhenABlockIsWaiting(t *testing.T) {
+	line := NewTimeline(1000, 2)
+	line.Add([]int16{1, 1, 2, 2, 3, 3}, Second)
+	if at, ok := line.Ready(3); !ok || at != Second {
+		t.Fatalf("three frames are waiting from one second, got %d %v", at, ok)
+	}
+	if _, ok := line.Ready(4); ok {
+		t.Fatal("four frames are not waiting")
+	}
+}
+
+func TestMixAddsAndHoldsAtTheLoudest(t *testing.T) {
+	into := []int16{100, -100, 30000, -30000, 5}
+	Mix(into, []int16{50, -50, 10000, -10000})
+	want := []int16{150, -150, 32767, -32768, 5}
+	for i := range want {
+		if into[i] != want[i] {
+			t.Fatalf("got %v, want %v", into, want)
+		}
+	}
+}

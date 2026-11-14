@@ -23,7 +23,7 @@
 | Starts when you say | Opening the program records nothing. Recording starts when you press **Start recording**, in the window or on the menu of the icon by the clock, and stops when you press **Stop recording** |
 | Save on demand | A shortcut that works in any program or game, a button, or the icon by the clock writes the loop to an MP4 file |
 | Hardware encoding | Uses Intel Quick Sync, NVIDIA NVENC or the AMD encoder, whichever belongs to the chip that drives the screen |
-| Sound | Records what the computer plays, kept in step with the picture |
+| Sound | Records what the computer plays, kept in step with the picture, and your microphone as well if you choose one |
 | Mouse pointer | Drawn into the recording, including the kinds that invert what is under them |
 | Memory only | The loop lives in memory. Nothing is written to disk until you save, and it is wiped when you stop or exit |
 | Self-check | `lazareplay-check.exe` tests the recorder on your own computer and prints a report |
@@ -51,7 +51,7 @@ Other computers will differ. The figures have not been measured while a game was
 ## Download and run
 
 1. Open [Releases](https://github.com/kimineechan/LazaReplay/releases).
-2. Download `LazaReplay-v1.1.0-windows-x64.zip`.
+2. Download `LazaReplay-v1.2.0-windows-x64.zip`.
 3. Extract the ZIP and open `LazaReplay.exe`.
 
 LazaReplay targets **64-bit Windows 10 and Windows 11**. It needs no Go, Python, Node, or separate application framework.
@@ -59,7 +59,7 @@ LazaReplay targets **64-bit Windows 10 and Windows 11**. It needs no Go, Python,
 Release assets include `SHA256SUMS.txt`. Check the ZIP in PowerShell with:
 
 ```powershell
-Get-FileHash .\LazaReplay-v1.1.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\LazaReplay-v1.2.0-windows-x64.zip -Algorithm SHA256
 ```
 
 Compare the result with its entry in `SHA256SUMS.txt`.
@@ -74,9 +74,9 @@ Compare the result with its entry in `SHA256SUMS.txt`.
 4. When something has just happened that you want to keep, press **Ctrl + Shift + F9**. The clip is saved to the `LazaReplay` folder in your Videos folder.
 5. **Stop recording** stops the recorder and wipes the loop. **Exit**, on the menu of the icon by the clock, closes the program.
 
-<p align="center"><img src="docs/screenshots/settings.png" width="840" alt="The Settings section: length, quality, picture size, screen, shortcut, folder, and four switches for sound and for starting"></p>
+<p align="center"><img src="docs/screenshots/settings.png" width="840" alt="The Settings section: length, quality, picture size, screen, microphone, shortcut, folder, and four switches for sound and for starting"></p>
 
-**02 Settings** sets how much is kept, the quality, the picture size and rate, which screen is recorded, the shortcut, whether sound is recorded, and where clips go. Each choice shows what it costs in memory. Two switches decide how LazaReplay starts: **Start with Windows** opens it by the clock when you sign in, and **Start recording when LazaReplay opens** makes it record without being asked. Both are off unless you turn them on.
+**02 Settings** sets how much is kept, the quality, the picture size and rate, which screen is recorded, which microphone if any, the shortcut, whether what the computer plays is recorded, and where clips go. Each choice shows what it costs in memory. Two switches decide how LazaReplay starts: **Start with Windows** opens it by the clock when you sign in, and **Start recording when LazaReplay opens** makes it record without being asked. Both are off unless you turn them on.
 
 See the [usage guide](docs/USAGE.md) for every setting, the command-line switches and what each status message means.
 
@@ -102,7 +102,7 @@ If an encoder fails soon after starting, twice, LazaReplay passes it over and us
 - A screen that is turned on its side is recorded as the panel sees it, sideways, and without the mouse pointer.
 - A screen in HDR mode is recorded in standard range, and may look washed out.
 - A screen larger than 4096 by 2160 is scaled down to fit. Picture sizes above 1080p are a setting; 1080p is the default.
-- Sound is whatever plays on the default playback device. A microphone is not recorded.
+- Sound is whatever plays on the default playback device. A microphone is recorded only if you choose one in Settings. It is mixed into the same sound track as the rest, so its loudness cannot be changed in the clip afterwards.
 - One screen is recorded at a time.
 - AMD graphics chips, NVIDIA desktop cards and Windows 11 have not been tested by the author. The self-check will tell you how LazaReplay fares on yours.
 - The window is drawn by LazaReplay itself, so a screen reader cannot read its controls. The menu of the icon by the clock is a standard Windows menu that a screen reader can read, and the command-line switches start, stop, save and exit.
@@ -115,6 +115,7 @@ If an encoder fails soon after starting, twice, LazaReplay passes it over and us
 LazaReplay records your screen for as long as recording is switched on, so it is worth being exact.
 
 - Nothing is recorded until you press **Start recording**. Opening the program records nothing, and neither does having it start with Windows, unless you have turned on **Start recording when LazaReplay opens**, which is off to begin with.
+- No microphone is recorded unless you choose one under **02 Settings**. The list starts at **Off**.
 - The recording is held in memory, compressed. It is not written to disk, in any form, until you save a clip.
 - Stopping or exiting wipes it.
 - The icon by the clock is there whenever LazaReplay is running: a ring with a red dot while it records, the ring alone while it does not. There is no way to run it without that icon.

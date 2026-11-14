@@ -1,5 +1,5 @@
-// Package audio captures what the computer plays and lines it up with the
-// clock the video uses.
+// Package audio captures what the computer plays, and a microphone, and
+// lines them up with the clock the video uses.
 package audio
 
 // Second is one second in the 100-nanosecond units used for every time.
@@ -27,6 +27,7 @@ type Timeline struct {
 	anchor   int64   // time of the first sample ever taken since the anchor was set
 	taken    int64   // frames taken since then
 	started  bool
+	cut      []int16 // what Cut last returned
 }
 
 // NewTimeline makes a timeline for sound of the given rate and channels.
@@ -109,4 +110,59 @@ func (t *Timeline) Take(frames int) (samples []int16, at int64, ok bool) {
 		t.samples = nil // let the consumed memory go
 	}
 	return samples, at, true
+}
+
+// Ready reports whether the given number of frames is waiting, and the
+// time of the first.
+func (t *Timeline) Ready(frames int) (at int64, ok bool) {
+	return t.head(), len(t.samples) >= frames*t.channels
+}
+
+// Covers reports whether sound has arrived for every moment before the
+// given time.
+func (t *Timeline) Covers(until int64) bool { return t.started && t.next() >= until }
+
+// Cut returns the given number of frames starting at the given time,
+// which is how a second run of sound, a microphone, is lined up with the
+// first before the two are added together. Whatever is older than that
+// time is thrown away, and where there is no sound for part of the span,
+// that part is silence. The slice is valid until the next call.
+func (t *Timeline) Cut(at int64, frames int) []int16 {
+	n := frames * t.channels
+	if cap(t.cut) < n {
+		t.cut = make([]int16, n)
+	}
+	out := t.cut[:n]
+	clear(out)
+	if !t.started {
+		return out
+	}
+	// How many frames the waiting sound starts after the span does. When
+	// it starts before, the frames in front are dropped.
+	lead := int((t.head() - at) * int64(t.rate) / Second)
+	if lead < 0 {
+		drop := min(-lead, len(t.samples)/t.channels)
+		t.samples = t.samples[drop*t.channels:]
+		t.taken += int64(drop)
+		lead = 0
+	}
+	if lead < frames {
+		used := copy(out[lead*t.channels:], t.samples)
+		t.samples = t.samples[used:]
+		t.taken += int64(used / t.channels)
+	}
+	if len(t.samples) == 0 {
+		t.samples = nil
+	}
+	return out
+}
+
+// Mix adds one run of samples to another of the same length. A sum too
+// loud for a sample to hold is held at the loudest it can, which sounds
+// far better than letting it wrap round.
+func Mix(into, from []int16) {
+	for i, v := range from[:min(len(from), len(into))] {
+		sum := int32(into[i]) + int32(v)
+		into[i] = int16(max(-32768, min(32767, sum)))
+	}
 }

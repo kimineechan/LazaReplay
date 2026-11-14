@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 - 2026-11-14
+
+- Record a microphone. **Microphone**, under **02 Settings**, lists Off, the default microphone of Windows and each microphone by name. Your voice is added to what the computer plays, in the same sound track, in step with it.
+- No microphone is recorded unless you choose one: the list starts at Off, and a settings file from an earlier version leaves it off.
+- With **Record what the computer plays** switched off and a microphone chosen, clips have your voice alone.
+- A microphone that is unplugged or blocked does not stop the recording. The clip carries on without it, the Sound line says why, and the microphone is used again when it is back.
+- The self-check adds a tone in the place of a microphone and checks that it is in the saved clip beside the computer's sound. It never listens to a real microphone.
+
 ## 1.1.0 - 2026-11-14
 
 Recording now starts when you start it, and the window is new.

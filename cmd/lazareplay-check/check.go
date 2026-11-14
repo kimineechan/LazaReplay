@@ -174,7 +174,8 @@ func describe(s recorder.Status) {
 
 // generated records the test card through the chip of one screen and
 // checks the clip against it. With sound set it also records clicks made
-// on the second and checks them against a lamp on the card.
+// on the second and checks them against a lamp on the card, and adds a
+// tone in the place of a microphone and checks that it is there too.
 func generated(options recorder.Options, sound bool) {
 	const width, height = 1920, 1080
 	options.Source = func(device *dx.Device, epoch int64) (recorder.Screen, error) {
@@ -188,6 +189,8 @@ func generated(options recorder.Options, sound bool) {
 	if sound {
 		options.Sound = true
 		options.SoundSource = func(epoch int64) (audio.Input, error) { return &clicker{epoch: epoch}, nil }
+		options.Mic = true
+		options.MicSource = func(epoch int64) (audio.Input, error) { return &clicker{epoch: epoch, tone: true}, nil }
 	}
 	s, path, err := run(options, 5)
 	if err != nil {
@@ -221,6 +224,9 @@ func generated(options recorder.Options, sound bool) {
 			text = fmt.Sprintf("%.1f s of %d Hz sound, %.0f ms from the picture", f.SoundLength, f.Rate, math.Abs(middle(f.Gaps)))
 		}
 		line("sound", text, together)
+		// The stand-in for the microphone hums at 1000 Hz, quieter than the
+		// clicks but all the time, so most of the sound should be its hum.
+		line("microphone", fmt.Sprintf("added to the sound: its tone is %.0f%% of what is heard", 100*f.Tone), s.Mic && f.Tone >= 0.5)
 	}
 }
 
@@ -244,6 +250,7 @@ func live(m recorder.Monitor) {
 	} else {
 		note("sound", "not recording: "+s.Silent)
 	}
+	note("microphone", "not used here: the self-check never listens to a real microphone")
 	f, err := examine(path, 1, false, false)
 	if err != nil {
 		line("playback", "the saved clip could not be played: "+err.Error(), false)

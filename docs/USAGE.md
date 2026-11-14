@@ -25,7 +25,7 @@ The see-through effect does not depend on the **Transparency effects** setting o
 | Status | A light and a sentence. A grey ring: not recording. Red: recording, with the screen, the picture size and how many pictures a second. Amber: starting, or held up, and the sentence says by what |
 | Encoder | The video encoder in use, and whether it runs on the graphics chip or on the processor. It is chosen when recording starts |
 | In the loop | How much footage is held, out of the length you chose, and the memory it takes |
-| Sound | Whether what the computer plays is being recorded, or why not |
+| Sound | What sound is being recorded: what the computer plays, the microphone, or both. If one of them cannot be recorded it says why |
 | Last clip | The file saved most recently. **Show in folder** opens its folder with the file selected |
 
 **Start recording** begins recording into an empty loop. While LazaReplay records, the same button reads **Stop recording**: it stops the recorder and wipes the loop from memory. Use it before doing anything you would not want in a clip.
@@ -62,7 +62,7 @@ Resting the pointer on the icon says the same in words.
 
 <p align="center"><img src="screenshots/settings.png" width="840" alt="The Settings section"></p>
 
-Changes take effect at once and are remembered. While LazaReplay is recording, changing the length, the quality, the picture, the screen or the sound starts the loop afresh, so save first if there is something in it you want. While it is not recording, changes only set what the next recording will use.
+Changes take effect at once and are remembered. While LazaReplay is recording, changing the length, the quality, the picture, the screen, the microphone or the sound starts the loop afresh, so save first if there is something in it you want. While it is not recording, changes only set what the next recording will use.
 
 | Setting | What it does |
 | --- | --- |
@@ -70,14 +70,25 @@ Changes take effect at once and are remembered. While LazaReplay is recording, c
 | Quality | Low, Medium or High. Higher quality is a higher bitrate, which is more memory and larger files. The line beside it shows the picture size and bitrate that result |
 | Picture | The tallest picture to record. A larger screen is scaled down to it; a smaller one is never scaled up. Then the rate: 30 or 60 pictures a second |
 | Screen | Which screen to record, when there is more than one |
+| Microphone | **Off**, which it is to begin with, **Default microphone**, which is whichever one Windows is set to use, or one microphone by name. Your voice is added to what the computer plays, in the same sound track |
 | Shortcut | Click the box and press the keys you want. A key on its own, or with Shift alone, has Ctrl and Alt added to it, because otherwise it would be taken away from every other program. **Backspace** or **Delete** in the box removes the shortcut |
 | Save clips to | The folder for clips. **Change** picks another |
-| Record what the computer plays | Sound from the default playback device. Switch off for silent clips |
+| Record what the computer plays | Sound from the default playback device. Switch off, with the microphone Off too, for silent clips; with a microphone chosen, the clip then has your voice alone |
 | Play a sound when a clip is saved | The confirmation described above |
 | Start with Windows | Opens LazaReplay when you sign in, with no window, by the clock. It does not record until you start it there, unless the next switch is on |
 | Start recording when LazaReplay opens | Makes LazaReplay record as soon as it opens, however it was opened, without waiting for **Start recording**. Off unless you switch it on |
 
 With both of the last two switched on, LazaReplay records from the moment you sign in, as version 1.0.0 did.
+
+### The microphone
+
+Choosing a microphone records your voice along with the game or program. A few things are worth knowing.
+
+- A microphone that is muted, by a switch on a headset or in Windows, records as silence. LazaReplay cannot tell that from a quiet room. If your voice is missing from a clip, try the microphone by name in place of **Default microphone**, and check the mute switch.
+- If the microphone is unplugged while recording, the clip carries on with what the computer plays, the Sound line says so, and the microphone is used again when it is back.
+- If Windows is set to keep programs away from the microphone, the Sound line says that Windows is blocking it. Allow it under Settings, Privacy, Microphone, in Windows.
+- Your voice and the computer's sound are mixed into one track when they are recorded. They cannot be separated or balanced in the clip afterwards.
+- With headphones, only your voice reaches the microphone. With speakers, the microphone also hears the speakers, so the computer's sound is recorded twice, the second time as an echo.
 
 ### How much memory
 
@@ -138,6 +149,9 @@ The self-check does not need LazaReplay to be recording, and does not start it.
 | Too many programs are capturing the screen at once. | Windows limits how many programs can duplicate one screen. Close another recorder |
 | No video encoder could be started | Neither a hardware encoder nor the Windows software encoder would start. The message lists why. Run the self-check |
 | No playback device was found, so clips will be silent. | There is nothing to record sound from |
+| The microphone is not connected. | The microphone chosen in Settings is not plugged in. The clip goes on without it |
+| The microphone went away. | It was unplugged or switched off while recording. It is used again when it is back |
+| Windows is blocking the microphone. | Windows is set to keep programs away from it. Allow it under Settings, Privacy, Microphone |
 | The media features of Windows are missing. | An N or KN edition of Windows without the Media Feature Pack. Add it under Settings, Apps, Optional features |
 | *Shortcut* is taken by another program. | Another program registered the same keys first. Choose a different shortcut in Settings |
 | There is not enough room on that disk | The clip was not saved. Free some space or change the folder, then save again; the loop is still in memory |

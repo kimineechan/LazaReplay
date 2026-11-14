@@ -14,6 +14,7 @@ import (
 	"time"
 	"unsafe"
 
+	"lazareplay/internal/audio"
 	"lazareplay/internal/autostart"
 	"lazareplay/internal/mf"
 	"lazareplay/internal/recorder"
@@ -48,6 +49,7 @@ type app struct {
 	w        *winui.Window
 	settings settings.Settings
 	monitors []recorder.Monitor
+	mics     []audio.Device
 
 	rec        *recorder.Recorder // nil while stopped or between restarts
 	generation int                // counts restarts, so a late one can tell it was overtaken
@@ -67,9 +69,9 @@ type app struct {
 	lastClip                                 string
 
 	// Settings page.
-	length, quality, size, rate, screen, hotkey, folder *winui.Control
-	memory, bitrate, taken                              *winui.Control
-	soundBox, chimeBox, startBox, recordBox             *winui.Control
+	length, quality, size, rate, screen, mic, hotkey, folder *winui.Control
+	memory, bitrate, taken                                   *winui.Control
+	soundBox, chimeBox, startBox, recordBox                  *winui.Control
 }
 
 // request is what the command line asks for.
@@ -148,7 +150,7 @@ func main() {
 		winui.Fatal(appName, err)
 		return
 	}
-	w, err := winui.New("LazaReplay | save the last minutes of your screen", appClass+profile(), 760, 640)
+	w, err := winui.New("LazaReplay | save the last minutes of your screen", appClass+profile(), 760, 678)
 	if err != nil {
 		winui.Fatal(appName, err)
 		return
@@ -195,6 +197,7 @@ func main() {
 	w.OnPage(func(page int) {
 		if page == 1 {
 			a.listScreens()
+			a.listMics()
 		}
 	})
 	w.ShowPage(0)
@@ -215,42 +218,42 @@ func (a *app) build() {
 	w.Strip(32, 104, 696, 44)
 	w.Section("01  Replay", 0, 36, 108, 342, 36)
 	w.Section("02  Settings", 1, 382, 108, 342, 36)
-	w.Rule(32, 584, 696)
-	a.foot = w.Quiet(ready, 32, 594, 696, 24)
+	w.Rule(32, 622, 696)
+	a.foot = w.Quiet(ready, 32, 632, 696, 24)
 
 	// 01  Replay
 	w.Page(0)
 	w.Heading("Save what just happened", 32, 168, 696, 30)
 	w.Label("While it records, the screen is kept in memory and anything older than the length you chose is forgotten. Nothing is written to disk until you save.", 32, 202, 696, 44)
-	w.Panel(32, 256, 696, 212)
-	w.Caption("Status", 52, 268, 110, 28)
-	a.light = w.Light(172, 268, 12, 28)
-	a.status = w.Line("", 194, 268, 514, 28)
-	w.Caption("Encoder", 52, 300, 110, 28)
-	a.encoder = w.Line("", 172, 300, 536, 28)
-	w.Caption("In the loop", 52, 332, 110, 28)
-	a.held = w.Line("", 172, 332, 536, 28)
-	a.bar = w.Bar(172, 364, 536, 6)
-	w.Caption("Sound", 52, 380, 110, 28)
-	a.sound = w.Line("", 172, 380, 536, 28)
-	w.Caption("Last clip", 52, 420, 110, 34)
-	a.clip = w.Path("Nothing saved yet", 172, 420, 392, 34)
-	w.Button("Show in folder", 574, 420, 134, 34, func() {
+	w.Panel(32, 256, 696, 232)
+	w.Caption("Status", 52, 270, 110, 28)
+	a.light = w.Light(172, 270, 12, 28)
+	a.status = w.Line("", 194, 270, 514, 28)
+	w.Caption("Encoder", 52, 306, 110, 28)
+	a.encoder = w.Line("", 172, 306, 536, 28)
+	w.Caption("In the loop", 52, 342, 110, 28)
+	a.held = w.Line("", 172, 342, 536, 28)
+	a.bar = w.Bar(172, 376, 536, 6)
+	w.Caption("Sound", 52, 394, 110, 28)
+	a.sound = w.Line("", 172, 394, 536, 28)
+	w.Caption("Last clip", 52, 438, 110, 34)
+	a.clip = w.Path("Nothing saved yet", 172, 438, 392, 34)
+	w.Button("Show in folder", 574, 438, 134, 34, func() {
 		if _, err := os.Stat(a.lastClip); a.lastClip != "" && err == nil {
 			w.Reveal(a.lastClip)
 		} else {
 			a.openFolder()
 		}
 	})
-	a.keys = w.Quiet("", 32, 484, 696, 24)
-	a.toggle = w.Button("Start recording", 286, 520, 208, 40, a.flip)
-	a.save = w.Button("Save the last 5 minutes", 506, 520, 222, 40, a.saveClip)
+	a.keys = w.Quiet("", 32, 506, 696, 24)
+	a.toggle = w.Button("Start recording", 286, 556, 208, 40, a.flip)
+	a.save = w.Button("Save the last 5 minutes", 506, 556, 222, 40, a.saveClip)
 
 	// 02  Settings
 	w.Page(1)
 	w.Heading("Choose what is kept", 32, 168, 696, 30)
-	w.Label("Changes take effect at once. While recording, changing the length, the picture, the screen or the sound starts the loop afresh, so save anything you want to keep first.", 32, 202, 696, 44)
-	w.Panel(32, 256, 696, 248)
+	w.Label("Changes take effect at once. While recording, changing the length, the picture, the screen, the microphone or the sound starts the loop afresh, so save anything you want to keep first.", 32, 202, 696, 44)
+	w.Panel(32, 256, 696, 286)
 	w.Caption("Keep the last", 52, 268, 116, 34)
 	a.length = w.Choice(lengthNames, 172, 268, 200, 34, a.changed)
 	a.memory = w.Note("", 386, 268, 322, 34)
@@ -262,12 +265,14 @@ func (a *app) build() {
 	a.rate = w.Choice(rateNames, 386, 344, 200, 34, a.changed)
 	w.Caption("Screen", 52, 382, 116, 34)
 	a.screen = w.Choice(nil, 172, 382, 414, 34, a.changed)
-	w.Caption("Shortcut", 52, 420, 116, 34)
-	a.hotkey = w.Shortcut(172, 420, 200, 34, a.shortcutChanged)
-	a.taken = w.Note("", 386, 420, 322, 34)
-	w.Caption("Save clips to", 52, 458, 116, 34)
-	a.folder = w.Path("", 172, 458, 392, 34)
-	w.Button("Change...", 574, 458, 134, 34, func() {
+	w.Caption("Microphone", 52, 420, 116, 34)
+	a.mic = w.Choice(nil, 172, 420, 414, 34, a.changed)
+	w.Caption("Shortcut", 52, 458, 116, 34)
+	a.hotkey = w.Shortcut(172, 458, 200, 34, a.shortcutChanged)
+	a.taken = w.Note("", 386, 458, 322, 34)
+	w.Caption("Save clips to", 52, 496, 116, 34)
+	a.folder = w.Path("", 172, 496, 392, 34)
+	w.Button("Change...", 574, 496, 134, 34, func() {
 		folder, err := w.FolderDialog("Choose where clips are saved")
 		if err != nil {
 			a.say(sentence(err))
@@ -277,13 +282,13 @@ func (a *app) build() {
 			a.folder.SetText(folder)
 		}
 	})
-	a.soundBox = w.Switch("Record what the computer plays", 52, 516, 320, 26, a.changed)
-	a.chimeBox = w.Switch("Play a sound when a clip is saved", 52, 548, 320, 26, func() {
+	a.soundBox = w.Switch("Record what the computer plays", 52, 554, 320, 26, a.changed)
+	a.chimeBox = w.Switch("Play a sound when a clip is saved", 52, 586, 320, 26, func() {
 		a.settings.Chime = a.chimeBox.On()
 		a.store()
 	})
-	a.startBox = w.Switch("Start with Windows", 386, 516, 322, 26, a.startChanged)
-	a.recordBox = w.Switch("Start recording when LazaReplay opens", 386, 548, 322, 26, func() {
+	a.startBox = w.Switch("Start with Windows", 386, 554, 322, 26, a.startChanged)
+	a.recordBox = w.Switch("Start recording when LazaReplay opens", 386, 586, 322, 26, func() {
 		a.settings.Record = a.recordBox.On()
 		a.store()
 	})
@@ -303,6 +308,7 @@ func (a *app) fill() {
 	a.recordBox.Turn(s.Record)
 	a.folder.SetText(a.clipFolder())
 	a.listScreens()
+	a.listMics()
 	a.notes()
 }
 
@@ -332,6 +338,41 @@ func (a *app) listScreens() {
 	a.screen.Choose(chosen)
 }
 
+// listMics fills the list of microphones with those plugged in now. No
+// microphone is recorded unless one is chosen here.
+func (a *app) listMics() {
+	a.mics = audio.Microphones()
+	names, chosen := micEntries(a.mics, a.settings.Mic, a.settings.MicDevice)
+	a.mic.SetEntries(names)
+	a.mic.Choose(chosen)
+}
+
+// micEntries returns the entries of the microphone list and which is
+// chosen: Off, then whichever microphone Windows has as its default, then
+// each microphone by name. A microphone that was chosen and is not plugged
+// in keeps its place at the end, so the choice is not lost.
+func micEntries(mics []audio.Device, on bool, device string) (names []string, chosen int) {
+	names = []string{"Off", "Default microphone"}
+	found := device == ""
+	for i, m := range mics {
+		names = append(names, m.Name)
+		if m.ID == device {
+			found, chosen = true, i+2
+		}
+	}
+	if !found {
+		names = append(names, "The microphone chosen before (not connected)")
+		chosen = len(names) - 1
+	}
+	switch {
+	case !on:
+		chosen = 0
+	case device == "":
+		chosen = 1
+	}
+	return names, chosen
+}
+
 // screenName names a screen the way a person would.
 func screenName(monitors []recorder.Monitor, name string, capital bool) string {
 	text := "the main screen"
@@ -355,6 +396,16 @@ func (a *app) changed() {
 	s.Height = settings.Heights[max(a.size.Chosen(), 0)]
 	s.Rate = settings.Rates[max(a.rate.Chosen(), 0)]
 	s.Sound = a.soundBox.On()
+	switch i := a.mic.Chosen(); {
+	case i <= 0:
+		s.Mic = false
+	case i == 1:
+		s.Mic, s.MicDevice = true, ""
+	case i-2 < len(a.mics):
+		s.Mic, s.MicDevice = true, a.mics[i-2].ID
+	default: // the one chosen before, which is not connected
+		s.Mic = true
+	}
 	s.Monitor = ""
 	if i := a.screen.Chosen(); i >= 0 && i < len(a.monitors) && !a.monitors[i].Main {
 		s.Monitor = a.monitors[i].Name
@@ -388,7 +439,7 @@ func (a *app) options() recorder.Options {
 	s := a.settings
 	return recorder.Options{
 		Window: time.Duration(s.Seconds) * time.Second, Rate: s.Rate, Quality: s.Quality,
-		Height: s.Height, Monitor: s.Monitor, Sound: s.Sound,
+		Height: s.Height, Monitor: s.Monitor, Sound: s.Sound, Mic: s.Mic, MicDevice: s.MicDevice,
 	}
 }
 
@@ -491,14 +542,11 @@ func look(s settings.Settings, monitors []recorder.Monitor, recording, running, 
 			Status:  "Not recording. Nothing is kept until you press Start recording.",
 			Encoder: "Chosen when recording starts",
 			Held:    "Empty",
-			Sound:   "Off",
+			Sound:   soundPlan(s.Sound, s.Mic),
 			Hint:    "Opening LazaReplay records nothing. Press Start recording when you want the loop to run.",
 			Flip:    "Start recording",
 			Icon:    iconIdle,
 			Tip:     "LazaReplay: not recording",
-		}
-		if s.Sound {
-			f.Sound = "Recorded once recording starts"
 		}
 		return f
 	}
@@ -533,15 +581,7 @@ func look(s settings.Settings, monitors []recorder.Monitor, recording, running, 
 			f.Encoder = "Windows software encoder, on the processor, kept light at 720p"
 		}
 	}
-	switch {
-	case !s.Sound:
-	case r.Sound:
-		f.Sound = "Recording what the computer plays"
-	case r.Silent != "":
-		f.Sound = r.Silent
-	default:
-		f.Sound = "Starting..."
-	}
+	f.Sound = soundNow(s.Sound, s.Mic, r)
 	switch {
 	case trouble != "":
 		f.Hint = trouble
@@ -551,6 +591,41 @@ func look(s settings.Settings, monitors []recorder.Monitor, recording, running, 
 		f.Hint = "No shortcut is set. Choose one in Settings to save from any program."
 	}
 	return f
+}
+
+// soundPlan says what sound will be recorded once recording starts.
+func soundPlan(computer, mic bool) string {
+	switch {
+	case computer && mic:
+		return "The computer and the microphone, once recording starts"
+	case computer:
+		return "Recorded once recording starts"
+	case mic:
+		return "The microphone, once recording starts"
+	}
+	return "Off"
+}
+
+// soundNow says what sound is being recorded, and what is in the way of
+// the rest. computer and mic are what the user asked for.
+func soundNow(computer, mic bool, r recorder.Status) string {
+	switch {
+	case !computer && !mic:
+		return "Off"
+	case r.Sound && r.Mic:
+		return "Recording what the computer plays and the microphone"
+	case r.Sound && mic && r.MicNote != "":
+		return "Recording what the computer plays. " + r.MicNote
+	case r.Sound:
+		return "Recording what the computer plays"
+	case r.Mic:
+		return "Recording the microphone"
+	case computer && r.Silent != "":
+		return r.Silent
+	case !computer && r.MicNote != "":
+		return r.MicNote
+	}
+	return "Starting..."
 }
 
 // refresh shows the state of the recorder, in the window and by the clock.

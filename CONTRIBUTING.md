@@ -50,7 +50,7 @@ The self-check has other modes that exercise one stage at a time. `lazareplay-ch
 | `internal/dx` | Direct3D: adapters and screens, desktop duplication, conversion, pointer drawing |
 | `internal/mf` | Media Foundation: the H.264 and AAC encoders, and a reader used only to check clips |
 | `internal/nvenc` | NVIDIA's encoder, driven directly |
-| `internal/audio` | Loopback capture and the sound timeline |
+| `internal/audio` | Loopback and microphone capture, and the sound timeline |
 | `internal/ring`, `internal/h264`, `internal/mp4` | The loop, the H.264 stream reader and the MP4 writer |
 | `internal/recorder` | Ties the stages together; chooses the encoder; saves clips |
 | `internal/testcard` | The picture the self-check records |
@@ -68,6 +68,7 @@ The self-check has other modes that exercise one stage at a time. `lazareplay-ch
 - Every structure that mirrors a Windows or driver structure says which one in its comment, and its layout is taken from the published header, not from memory.
 - A pointer converted to `uintptr` for a call is converted in the argument list of that call, never stored first. `com.Call` and the encoder calls rely on this to keep the memory alive and in place.
 - Recording is always visible. Do not add a way to run without the icon by the clock.
+- No microphone is recorded unless the user chose one. The setting is off by default and has to stay so.
 - Nothing is recorded until the user starts it. Anything that starts recording by itself has to be a choice the user made, off by default.
 - The window is redrawn only where something changed, and never while it is hidden. Do not add an animation or a timer that repaints.
 - Every colour of text has to stay readable over a white screen and a black one. `internal/winui/theme_test.go` measures it; add new colours to that test.

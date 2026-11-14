@@ -44,12 +44,14 @@ type Screen interface {
 
 // Options are the choices the user makes.
 type Options struct {
-	Window  time.Duration // how much to keep
-	Rate    int           // pictures per second, 30 or 60
-	Quality int           // 0 low, 1 medium, 2 high
-	Height  int           // tallest picture to record; 0 keeps the screen's own size
-	Monitor string        // Windows name of the monitor; "" for the main screen
-	Sound   bool          // also record what the computer plays
+	Window    time.Duration // how much to keep
+	Rate      int           // pictures per second, 30 or 60
+	Quality   int           // 0 low, 1 medium, 2 high
+	Height    int           // tallest picture to record; 0 keeps the screen's own size
+	Monitor   string        // Windows name of the monitor; "" for the main screen
+	Sound     bool          // also record what the computer plays
+	Mic       bool          // also record a microphone
+	MicDevice string        // Windows name of the microphone; "" for the default one
 
 	// Source, when set, supplies the pictures in place of a monitor, and
 	// SoundSource the sound in place of what the computer plays. The
@@ -57,6 +59,8 @@ type Options struct {
 	// the time that counts as zero for the recording.
 	Source      func(device *dx.Device, epoch int64) (Screen, error)
 	SoundSource func(epoch int64) (audio.Input, error)
+	// MicSource, when set, stands in for the microphone in the same way.
+	MicSource func(epoch int64) (audio.Input, error)
 	// Software forces the encoder that runs on the processor, for testing.
 	Software bool
 }
@@ -80,7 +84,7 @@ func (o Options) Bitrate(width, height, rate int) int {
 func (o Options) Memory(screenWidth, screenHeight int) int {
 	width, height := o.Size(screenWidth, screenHeight)
 	bits := o.Bitrate(width, height, o.Rate)
-	if o.Sound {
+	if o.Sound || o.Mic {
 		bits += soundBitrate
 	}
 	return int(float64(bits) / 8 * o.Window.Seconds())
@@ -132,8 +136,10 @@ type Status struct {
 	Pointer  bool          // whether the mouse pointer can be drawn
 	Drawn    bool          // pictures are converted by drawing, the cheaper way
 	Rotated  bool          // the screen is turned; it is recorded as the panel sees it
-	Sound    bool          // whether sound is being recorded
+	Sound    bool          // whether what the computer plays is being recorded
 	Silent   string        // why not, in plain words, when it was asked for
+	Mic      bool          // whether the microphone is being recorded
+	MicNote  string        // why not, in plain words, when it was asked for
 	Length   time.Duration // footage held
 	Bytes    int           // memory it takes
 	Frames   uint64        // pictures recorded since the start
@@ -186,7 +192,7 @@ func Start(options Options) *Recorder {
 	}
 	r.done.Add(1)
 	go r.run()
-	if options.Sound {
+	if options.Sound || options.Mic {
 		r.done.Add(1)
 		go r.listen()
 	}
@@ -264,6 +270,11 @@ func lap(phase int, from *int64) {
 		*from = now
 	}
 }
+
+// errDifferent is what a microphone that does not come in the form of the
+// rest of the sound gets. Windows converts real ones, so it does not arise
+// with them.
+var errDifferent = errors.New("its sound is in another form than the rest")
 
 // fault marks a failure that came from the video encoder.
 type fault struct {

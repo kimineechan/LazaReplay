@@ -64,10 +64,12 @@ The size of the loop is bounded twice: by time, and by a ceiling in bytes worked
 
 ## 5. Sound
 
-Windows offers a copy of whatever is on its way to the speakers, called loopback capture. No microphone is involved. Two things make it awkward, and both are handled in `internal/audio/timeline.go`.
+Windows offers a copy of whatever is on its way to the speakers, called loopback capture. No microphone is involved in that. Two things make it awkward, and both are handled in `internal/audio/timeline.go`.
 
 - Windows delivers nothing at all while nothing is playing. The gaps are filled with silence, or the sound track would be shorter than the pictures and drift out of step.
 - The sound card's clock runs very slightly fast or slow against the computer's. The timeline follows the times Windows reports, a little at a time, instead of trusting a count of samples for ever.
+
+A microphone, if the user chose one, is captured separately and asked of Windows in the same form, 48,000 samples a second in stereo, whatever the microphone itself delivers. Its packets arrive on their own schedule, so each block of the computer's sound waits, for up to a quarter of a second, until the microphone's sound of the same moment has come. The two are then added sample by sample; a sum too loud for a sample is held at the loudest value. If the microphone fails, the computer's sound goes on alone and the microphone is tried again every two seconds.
 
 Sound is compressed to AAC by the encoder built into Windows and stored in the loop alongside the pictures of the same moment.
 
@@ -98,7 +100,7 @@ The window is black, see-through and has rounded controls. Windows has no contro
 | `internal/dx` | Direct3D: adapters and screens, desktop duplication, conversion, pointer drawing |
 | `internal/mf` | Media Foundation: the H.264 and AAC encoders, and a reader used only to check clips |
 | `internal/nvenc` | NVIDIA's encoder, driven directly |
-| `internal/audio` | Loopback capture and the sound timeline |
+| `internal/audio` | Loopback and microphone capture, and the sound timeline |
 | `internal/ring` | The loop |
 | `internal/h264` | Reads an H.264 stream far enough to store it |
 | `internal/mp4` | The MP4 writer |

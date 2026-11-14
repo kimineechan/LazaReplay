@@ -119,16 +119,26 @@ The window itself:
 - **Dragging.** Holding the top of the window and moving the pointer moved the window by exactly the distance moved; holding a button or the lower part did not move it.
 - **Cost.** Recording a busy screen, the program used 703 ms of processor time in ten seconds with the window open and 875 ms with it closed, so the window adds nothing that can be told from the recorder's own variation. A test confirms that a hidden window is not drawn.
 
+## The microphone
+
+Version 1.2.0 can add a microphone to the sound.
+
+- **In the self-check.** A generated tone of 1000 Hz stands in for the microphone while the clicks stand in for the computer's sound. In the saved clip the clicks still fall where the lamp comes on, within 18 ms, and the tone is 61 to 64% of the sound energy, on both hardware encoders. The self-check never opens a real microphone.
+- **Real microphones.** The development computer has two. Each was opened for two seconds and gave 96,000 frames in 200 packets, every packet timed. The built-in one gave a signal; the headset, which was muted, gave silence, and a clip recorded from it was silent, as it should be.
+- **In the program.** With the default microphone chosen the Sound line read that both were being recorded and the clip played, with a sound track as long as the pictures. With the computer's sound switched off it read that the microphone was being recorded. With a microphone that does not exist chosen, recording went on and the line said the microphone was not connected.
+
+Not checked: what a recorded voice sounds like, since no clip was listened to; a microphone unplugged in the middle of a recording; Windows' privacy setting blocking the microphone; and how far the microphone's sound is from the picture, which the self-check measures only for the computer's sound.
+
 ## Automated tests
 
-73 tests run on every push: all of them on Windows, and those that do not need Windows on Linux as well, with the race detector.
+78 tests run on every push: all of them on Windows, and those that do not need Windows on Linux as well, with the race detector.
 
 | Package | What is tested |
 | --- | --- |
 | `internal/ring` | The window is kept and trimmed at keyframes; the byte ceiling; a snapshot is not disturbed by later pictures; new parameter sets start a fresh clip; reset |
 | `internal/mp4` | A file is written and read back through its own tables, with 32-bit and 64-bit offsets; inconsistent input is refused before a byte is written |
 | `internal/h264` | Streams are split into units; parameter sets are parsed, with escape bytes; damaged ones are rejected |
-| `internal/audio` | The sound timeline: steady sound, gaps filled with silence, a slow clock followed without inventing samples, overlaps dropped |
+| `internal/audio` | The sound timeline: steady sound, gaps filled with silence, a slow clock followed without inventing samples, overlaps dropped. Lining a second run of sound up with the first, and adding the two without wrapping round |
 | `internal/dx` | The three kinds of pointer are turned into the right layers; damaged shapes are refused; pictures are fitted without changing shape |
 | `internal/settings` | Round trip; damaged and out-of-range files fall back to the defaults; a first run and a file from 1.0.0 leave recording off |
 | `internal/winui` | The drawing code: smooth rounded shapes, clipping, pixels that stay valid however colours are laid over each other. The colours: every kind of text readable over white and over black. The keys a shortcut box takes. On Windows: the order Tab visits controls, lists, switches and buttons with keyboard and pointer, redrawing only what changed, and nothing drawn while hidden |

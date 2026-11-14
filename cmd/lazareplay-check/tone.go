@@ -3,6 +3,8 @@
 package main
 
 import (
+	"math"
+
 	"lazareplay/internal/clock"
 )
 
@@ -10,7 +12,11 @@ import (
 // for a one-millisecond click at the start of every second, counted from
 // the same zero as the lamp on the test card. In a saved clip each click
 // should line up with the lamp coming on.
+//
+// With tone set it stands in for a microphone instead and hums a steady,
+// quiet 1000 Hz. A clip of both should hold the clicks and the hum.
 type clicker struct {
+	tone     bool
 	epoch    int64
 	start    int64 // time of the first sample
 	produced int64 // frames handed out so far
@@ -37,7 +43,9 @@ func (c *clicker) Read() ([]int16, int64, error) {
 	for i := 0; i < 480; i++ {
 		when := c.start + (c.produced+int64(i))*clock.Second/clickRate - c.epoch
 		level := int16(0)
-		if when > 0 && when%clock.Second < clock.Second/1000 {
+		if c.tone {
+			level = int16(2000 * math.Sin(2*math.Pi*1000*float64(c.produced+int64(i))/clickRate))
+		} else if when > 0 && when%clock.Second < clock.Second/1000 {
 			level = 20000
 		}
 		c.samples[2*i], c.samples[2*i+1] = level, level

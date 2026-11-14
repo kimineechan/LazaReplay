@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"lazareplay/internal/audio"
 	"lazareplay/internal/recorder"
 	"lazareplay/internal/settings"
 	"lazareplay/internal/winui"
@@ -236,5 +237,72 @@ func TestWords(t *testing.T) {
 	}
 	if got := screenName(monitors, "", false); got != "the main screen" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestMicrophoneList(t *testing.T) {
+	mics := []audio.Device{{ID: "one", Name: "Headset"}, {ID: "two", Name: "Webcam"}}
+	names, chosen := micEntries(mics, false, "")
+	if len(names) != 4 || names[0] != "Off" || names[1] != "Default microphone" || names[3] != "Webcam" || chosen != 0 {
+		t.Errorf("off: %q, chosen %d", names, chosen)
+	}
+	if _, chosen := micEntries(mics, true, ""); chosen != 1 {
+		t.Errorf("the default microphone: chosen %d", chosen)
+	}
+	if _, chosen := micEntries(mics, true, "two"); chosen != 3 {
+		t.Errorf("a named microphone: chosen %d", chosen)
+	}
+	// Switched off, the list says Off whichever microphone is remembered.
+	if _, chosen := micEntries(mics, false, "two"); chosen != 0 {
+		t.Errorf("off with a microphone remembered: chosen %d", chosen)
+	}
+	// A chosen microphone that is unplugged keeps its place, so that
+	// opening Settings does not quietly change the choice.
+	names, chosen = micEntries(mics, true, "gone")
+	if len(names) != 5 || chosen != 4 || !strings.Contains(names[4], "not connected") {
+		t.Errorf("unplugged: %q, chosen %d", names, chosen)
+	}
+	if names, chosen := micEntries(nil, false, ""); len(names) != 2 || chosen != 0 {
+		t.Errorf("no microphones: %q, chosen %d", names, chosen)
+	}
+}
+
+func TestSoundWords(t *testing.T) {
+	for _, c := range []struct {
+		computer, mic bool
+		want          string
+	}{
+		{true, true, "The computer and the microphone, once recording starts"},
+		{true, false, "Recorded once recording starts"},
+		{false, true, "The microphone, once recording starts"},
+		{false, false, "Off"},
+	} {
+		if got := soundPlan(c.computer, c.mic); got != c.want {
+			t.Errorf("plan %v %v: %q", c.computer, c.mic, got)
+		}
+	}
+	note := "The microphone went away."
+	for _, c := range []struct {
+		computer, mic bool
+		r             recorder.Status
+		want          string
+	}{
+		{false, false, recorder.Status{}, "Off"},
+		{true, false, recorder.Status{Sound: true}, "Recording what the computer plays"},
+		{true, true, recorder.Status{Sound: true, Mic: true}, "Recording what the computer plays and the microphone"},
+		{true, true, recorder.Status{Sound: true, MicNote: note}, "Recording what the computer plays. " + note},
+		{true, true, recorder.Status{Sound: true}, "Recording what the computer plays"},
+		{false, true, recorder.Status{Mic: true}, "Recording the microphone"},
+		{false, true, recorder.Status{MicNote: note}, note},
+		{true, true, recorder.Status{Silent: "No playback device was found, so clips will be silent."}, "No playback device was found, so clips will be silent."},
+		{true, true, recorder.Status{}, "Starting..."},
+	} {
+		if got := soundNow(c.computer, c.mic, c.r); got != c.want {
+			t.Errorf("now %v %v %+v: %q, want %q", c.computer, c.mic, c.r, got, c.want)
+		}
+	}
+	// No microphone is mentioned, or recorded, unless the user chose one.
+	if f := look(settings.Default(), monitors, false, false, false, recorder.Status{}, ""); strings.Contains(f.Sound, "microphone") {
+		t.Errorf("a first run talks of a microphone: %q", f.Sound)
 	}
 }

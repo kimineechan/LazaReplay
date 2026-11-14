@@ -29,12 +29,15 @@ type Settings struct {
 	Modifiers uint32 `json:"modifiers"` // 1 Alt, 2 Ctrl, 4 Shift
 	Chime     bool   `json:"chime"`     // play a sound when a clip is saved
 	Record    bool   `json:"record"`    // start recording when the program opens, without being asked
+	Mic       bool   `json:"mic"`       // record a microphone as well
+	MicDevice string `json:"micDevice"` // Windows name of the microphone; empty for the default one
 }
 
 // Default returns the choices a first run starts with: five minutes at
 // medium quality, up to 1080p at 60 a second, with sound, saved with
 // Ctrl + Shift + F9. Recording does not start by itself: Record is off,
 // and a settings file written before that choice existed leaves it off.
+// No microphone is recorded unless the user chooses one.
 func Default() Settings {
 	return Settings{Seconds: 300, Quality: 1, Height: 1080, Rate: 60, Sound: true, Key: 0x78, Modifiers: 2 | 4, Chime: true}
 }
