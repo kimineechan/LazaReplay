@@ -77,6 +77,20 @@ The MP4 writer is written for this project. It lays the file out for instant pla
 
 The file is written under a temporary name and renamed when complete, so a clip either exists whole or not at all. The writing thread runs at background priority.
 
+## 7. The window
+
+The window is black, see-through and has rounded controls. Windows has no controls like that, and its own text drawing knows nothing of opacity, so LazaReplay draws the window itself. It stays a native Windows program: there is no web view and no interface toolkit, only calls to Windows.
+
+**One picture.** The whole window is a picture in memory in which every pixel has its own opacity. Rounded shapes are drawn by working out, for each pixel near an edge, how much of the pixel the shape covers, which is what makes a curve look smooth instead of stepped. The picture is handed to Windows as a layered window, a kind of window whose opacity is set pixel by pixel. Windows keeps its own copy, so moving the window or uncovering it costs LazaReplay nothing.
+
+**Text.** Windows draws the letters, white on black, on a second picture. That picture is then used as a stencil: where it is white the text colour is laid on the window, where it is grey, partly. Drawing the letters straight on the window would punch see-through holes in it.
+
+**The blur.** A window that only let the desktop show through would be hard to read over a page of text. LazaReplay asks Windows to blur what is behind the window, the way Windows blurs its own Start menu, and lays a black sheet that is four fifths solid over the result. The request is one Microsoft does not document, although it has kept its form since 2015; where it is missing or refused the sheet is made more solid instead, and with high contrast turned on in Windows it is fully solid. The colours are checked by a test that lays them over a white screen and a black one and measures the contrast of every kind of text.
+
+**Only what changed.** A control that changes marks its own rectangle as out of date. When the message that caused the change has been dealt with, that rectangle is redrawn and copied to Windows, once. There is no animation and no timer that repaints. While the window is hidden or minimised nothing is drawn at all, and the half-second timer that refreshes the figures is stopped; opening the window draws it once, complete.
+
+**Keyboard and pointer.** With no Windows controls there is nothing to do this for free, so the window keeps track itself of which control the pointer is over, which is pressed and which has the keyboard, and of the list that is open.
+
 ## Layout of the source
 
 | Path | Contents |
@@ -93,7 +107,8 @@ The file is written under a temporary name and renamed when complete, so a clip 
 | `internal/com` | The few helpers needed to call Windows COM interfaces |
 | `internal/settings`, `internal/autostart` | Remembered choices, and starting with Windows |
 | `internal/testcard` | A picture in which every pixel is known, for the self-check |
-| `internal/winui`, `cmd/lazareplay` | The native Windows interface and the app |
+| `internal/winui` | The window: the drawing code, the controls, the icon by the clock and its menu |
+| `cmd/lazareplay` | The app: what each state shows, starting and stopping, saving, the command line |
 | `cmd/lazareplay-check` | The self-check |
 | `tools/mkres` | Draws the icon and builds the Windows resource object |
 

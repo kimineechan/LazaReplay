@@ -91,9 +91,37 @@ Two failures were provoked on purpose, since real hardware seldom provides them:
 - The generated source was made to fail every 90 pictures in the way a monitor does when Windows takes it away for the lock screen. Recording carried on without a gap longer than two ticks.
 - The hardware encoder was made to report a failure after 40 pictures. After the second failure the recorder passed it over, started the software encoder and carried on; the clip from that point played back with every frame in order.
 
+## Starting by hand, and the new window
+
+Version 1.1.0 changed when recording starts and replaced the window. The built `LazaReplay.exe` was run on the development computer with a settings file of its own, and worked by sending its window the messages a mouse and a keyboard send. What it showed was read from copies of the window's picture and of its icon by the clock, its cost from Windows' own counters, and its clips with `lazareplay-check verify`.
+
+| Step | What was seen |
+| --- | --- |
+| Open the program | The window says Not recording and the icon is a plain ring. 31 ms of processor time in the first six seconds, 19 MB of memory |
+| Shortcut, then `--save`, while not recording | No file. The line at the foot says there is nothing to save |
+| Start recording | Recording within three seconds, a red light in the window and a red dot on the icon |
+| Shortcut while recording | One clip: 8.7 seconds, 87 pictures of a still screen, a sound track of the same length, decoded by Windows' decoders |
+| Stop recording | No processor time in four seconds. The shortcut saves nothing |
+| Start again, save four seconds later | A clip of 3.7 seconds: only footage from after the restart, so stopping had wiped the loop |
+| `--tray` | No window, plain ring, no processor time in three seconds |
+| `--start`, `--save`, `--stop`, `--exit` to the running copy | Recording with the red dot; one clip; plain ring and no further clip; closed |
+| `--save`, `--stop`, `--exit` with no copy running | Nothing opens |
+| `--tray --start` | No window, recording |
+| Start with Windows, on then off | The entry appears in the start-up list with `--tray`, then is gone |
+| Start recording when LazaReplay opens, on, then `--tray` | Recording without being asked. Off by default |
+
+The window itself:
+
+- **Readable.** It was shown over a white screen, a colourful picture and a picture of sharp black text, stripes and saturated colour. The text of the window stayed readable and nothing behind it could be read. A test measures the same thing by numbers for every kind of text, over white and over black, and requires the contrast the accessibility guidelines for the web ask of body text.
+- **Blur.** Windows blurred what was behind the window with its **Transparency effects** setting turned off, which is how the development computer is set.
+- **Scale.** Drawn at 100%, 125% and 150%. Asked for 200% on a 1920 by 1080 screen it drew itself at 153%, the largest that fits.
+- **Keyboard and pointer.** Lists, switches, buttons, the shortcut box and the ring that shows where the keyboard is were worked in the running program, and are covered by tests that need no screen.
+- **Dragging.** Holding the top of the window and moving the pointer moved the window by exactly the distance moved; holding a button or the lower part did not move it.
+- **Cost.** Recording a busy screen, the program used 703 ms of processor time in ten seconds with the window open and 875 ms with it closed, so the window adds nothing that can be told from the recorder's own variation. A test confirms that a hidden window is not drawn.
+
 ## Automated tests
 
-37 tests run on every push: all of them on Windows, and those that do not need Windows on Linux as well, with the race detector.
+73 tests run on every push: all of them on Windows, and those that do not need Windows on Linux as well, with the race detector.
 
 | Package | What is tested |
 | --- | --- |
@@ -102,7 +130,9 @@ Two failures were provoked on purpose, since real hardware seldom provides them:
 | `internal/h264` | Streams are split into units; parameter sets are parsed, with escape bytes; damaged ones are rejected |
 | `internal/audio` | The sound timeline: steady sound, gaps filled with silence, a slow clock followed without inventing samples, overlaps dropped |
 | `internal/dx` | The three kinds of pointer are turned into the right layers; damaged shapes are refused; pictures are fitted without changing shape |
-| `internal/settings` | Round trip; damaged and out-of-range files fall back to the defaults |
+| `internal/settings` | Round trip; damaged and out-of-range files fall back to the defaults; a first run and a file from 1.0.0 leave recording off |
+| `internal/winui` | The drawing code: smooth rounded shapes, clipping, pixels that stay valid however colours are laid over each other. The colours: every kind of text readable over white and over black. The keys a shortcut box takes. On Windows: the order Tab visits controls, lists, switches and buttons with keyboard and pointer, redrawing only what changed, and nothing drawn while hidden |
+| `cmd/lazareplay` | On Windows: the command line; what the window, the buttons and the icon by the clock show while stopped, starting, recording, saving and held up; the menu of the icon |
 | `internal/autostart` | Writing, reading and removing an entry, in a key of its own |
 
 The tests do not need a graphics chip. Everything that does is covered by the self-check, which cannot run on GitHub's build machines and is run by hand.
@@ -111,7 +141,9 @@ The tests do not need a graphics chip. Everything that does is covered by the se
 
 - **One computer.** Everything above was measured on one laptop. Intel Quick Sync and NVIDIA NVENC were exercised on it. No AMD chip was available, so the AMD route is written to the same interface as the Intel one and has never been run.
 - **NVIDIA desktop cards.** NVENC was tested on a laptop RTX 5070 with a current driver. The interface version used, 11.1, needs driver 471.41 or newer; older drivers fall back to NVIDIA's Media Foundation encoder, which could not be tested here because it does not start on this laptop.
-- **Windows 11.** Developed and tested on Windows 10 build 19045. The interfaces used are the same on Windows 11.
+- **Windows 11.** Developed and tested on Windows 10 build 19045. The interfaces used are the same on Windows 11. The new window asks Windows 11 for rounded corners and keeps the stronger blur while it is dragged; neither has been seen there.
+- **The window by eye.** How smoothly the window follows the pointer was checked by position, not watched. High contrast was not turned on to see the solid window. Versions of Windows 10 older than April 2018, which get the weaker blur, were not tried.
+- **Screen readers.** The window draws its own controls and a screen reader cannot read them. The menu of the icon by the clock carries the text screen readers look for; that was not tried with one.
 - **Games.** The cost was not measured while a game was running. On a computer with one graphics chip, recording shares that chip with the game; how the two share it under full load is untested.
 - **Turned and HDR screens.** Neither was available. A turned screen is recorded sideways without the pointer by design; an HDR screen is expected to record in standard range.
 - **Changing playback device.** The code that moves sound capture to a new default device was not exercised.

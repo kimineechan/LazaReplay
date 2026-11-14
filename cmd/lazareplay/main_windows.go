@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -25,12 +26,14 @@ const (
 	appClass = "LazaReplayNativeWindow"
 	ready    = "Ready. All work stays on this computer."
 
-	iconRecording = 1 // numbers of the icons in the program's resources
-	iconPaused    = 2
+	iconIdle      = 2 // numbers of the icons in the program's resources: by the clock while nothing is recorded
+	iconRecording = 3 // and while recording
 
-	signalShow = 0 // what a second copy of the program can ask of the first
-	signalSave = 1
-	signalExit = 2
+	signalShow  = 0 // what a second copy of the program can ask of the first
+	signalSave  = 1
+	signalExit  = 2
+	signalStart = 3
+	signalStop  = 4
 )
 
 var (
@@ -46,52 +49,97 @@ type app struct {
 	settings settings.Settings
 	monitors []recorder.Monitor
 
-	rec        *recorder.Recorder // nil while paused or between restarts
+	rec        *recorder.Recorder // nil while stopped or between restarts
 	generation int                // counts restarts, so a late one can tell it was overtaken
-	paused     bool
+	recording  bool               // the user has started recording and not stopped it
 	saving     bool
 	leaving    bool   // exit was asked for during a save and waits for it
-	hinted     bool   // the "still running" note has been shown
+	hinted     bool   // the "still open" note has been shown
 	shortcut   string // why the shortcut does not work, or ""
+	icon       int    // what the icon by the clock shows
+	tip        string //
 
 	// Replay page.
-	status, encoder, held, sound, clip, keys uintptr
-	bar                                      *winui.Bar
-	pause, save, show                        uintptr
-	foot                                     uintptr
+	status, encoder, held, sound, clip, keys *winui.Control
+	light, bar                               *winui.Control
+	toggle, save                             *winui.Control
+	foot                                     *winui.Control
 	lastClip                                 string
 
 	// Settings page.
-	length, quality, size, rate, screen, hotkey, folder uintptr
-	memory, bitrate                                     uintptr
-	soundBox, chimeBox, startBox                        uintptr
+	length, quality, size, rate, screen, hotkey, folder *winui.Control
+	memory, bitrate, taken                              *winui.Control
+	soundBox, chimeBox, startBox, recordBox             *winui.Control
+}
+
+// request is what the command line asks for.
+type request struct {
+	hidden bool // --tray: open with no window
+	start  bool // --start: record from the moment the program opens
+	ask    int  // what to ask of a copy that is already running, or -1 for nothing
+	alone  bool // whether the program opens when no copy is running
+}
+
+// parse reads the command line. One copy runs at a time, and starting the
+// program again talks to the copy that is running: it comes to the front,
+// or with --start, --stop, --save or --exit it does that. --tray opens the
+// program with no window.
+func parse(arguments []string) request {
+	r := request{ask: signalShow, alone: true}
+	for _, argument := range arguments {
+		switch argument {
+		case "--tray":
+			r.hidden = true
+		case "--start":
+			r.start = true
+		case "--stop":
+			r.ask, r.alone = signalStop, false
+		case "--save":
+			r.ask, r.alone = signalSave, false
+		case "--exit":
+			r.ask, r.alone = signalExit, false
+		}
+	}
+	switch {
+	case !r.alone: // there has to be a running copy to stop, to save from or to close
+	case r.start:
+		r.ask = signalStart
+	case r.hidden:
+		r.ask = -1
+	}
+	return r
+}
+
+// profile is added to the names by which copies of the program find each
+// other. It is empty in ordinary use. A copy given a settings file of its
+// own through LAZAREPLAY_SETTINGS, as in testing, gets a name of its own
+// from that file, so it runs beside the copy in daily use and the switches
+// on the command line reach the copy they were meant for.
+func profile() string {
+	path := os.Getenv("LAZAREPLAY_SETTINGS")
+	if path == "" {
+		return ""
+	}
+	if full, err := filepath.Abs(path); err == nil {
+		path = full
+	}
+	hash := fnv.New32a()
+	hash.Write([]byte(strings.ToLower(path)))
+	return fmt.Sprintf("-%08x", hash.Sum32())
 }
 
 func main() {
-	// One copy runs at a time. Starting the program again talks to the copy
-	// that is running: it comes to the front, or with --save it saves a
-	// clip, or with --exit it closes. --tray starts without the window.
-	command, hidden := signalShow, false
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "--tray":
-			hidden = true
-		case "--save":
-			command = signalSave
-		case "--exit":
-			command = signalExit
-		}
-	}
-	name, _ := syscall.UTF16PtrFromString("Local\\LazaReplaySingleInstance")
+	asked := parse(os.Args[1:])
+	name, _ := syscall.UTF16PtrFromString("Local\\LazaReplaySingleInstance" + profile())
 	_, _, exists := syscall.NewLazyDLL("kernel32.dll").NewProc("CreateMutexW").Call(0, 0, uintptr(unsafe.Pointer(name)))
 	if exists == syscall.Errno(183) {
-		if !hidden {
-			winui.Signal(appClass, command)
+		if asked.ask >= 0 {
+			winui.Signal(appClass+profile(), asked.ask)
 		}
 		return
 	}
-	if command != signalShow {
-		return // nothing is running to save from or to close
+	if !asked.alone {
+		return
 	}
 	// The loop is hundreds of megabytes of data the collector never needs to
 	// look inside. Collecting early keeps memory use close to what is held.
@@ -100,18 +148,21 @@ func main() {
 		winui.Fatal(appName, err)
 		return
 	}
-	w, err := winui.New("LazaReplay | save the last minutes of your screen", appClass, 760, 580)
+	w, err := winui.New("LazaReplay | save the last minutes of your screen", appClass+profile(), 760, 640)
 	if err != nil {
 		winui.Fatal(appName, err)
 		return
 	}
 	a := &app{w: w, settings: settings.Load(), monitors: recorder.Monitors()}
+	// Opening the program records nothing. Recording starts when the user
+	// starts it, unless they have asked for it to start by itself.
+	a.recording = asked.start || a.settings.Record
 	a.build()
 	a.fill()
 	a.applyShortcut()
+	w.Tray(iconIdle, "", w.Show, a.menu)
 	a.restart()
 
-	w.Tray(iconRecording, a.tip(), w.Show, a.menu)
 	w.OnHotkey(func(int) { a.saveClip() })
 	w.OnSignal(func(command int) {
 		switch command {
@@ -119,17 +170,25 @@ func main() {
 			a.saveClip()
 		case signalExit:
 			a.exit()
+		case signalStart:
+			a.start()
+		case signalStop:
+			a.stop()
 		default:
 			w.Show()
 		}
 	})
-	// Closing the window leaves the recorder running by the clock, where its
-	// icon shows that it is. Exit is on that icon's menu.
+	// Closing the window leaves the program by the clock, where its icon
+	// shows whether it is recording. Exit is on that icon's menu.
 	w.OnClose(func() bool {
 		w.Hide()
 		if !a.hinted {
 			a.hinted = true
-			w.Notify("LazaReplay is still running", "It keeps recording from here. Right-click this icon to pause it or to exit.")
+			if a.recording {
+				w.Notify("LazaReplay is still recording", "It keeps the last "+a.lengthName()+" from here. Right-click this icon to save, to stop or to exit.")
+			} else {
+				w.Notify("LazaReplay is still open", "It is not recording. Right-click this icon to start recording or to exit.")
+			}
 		}
 		return false
 	})
@@ -140,7 +199,7 @@ func main() {
 	})
 	w.ShowPage(0)
 	w.Every(500, a.refresh)
-	w.Run(hidden)
+	w.Run(asked.hidden)
 	if a.rec != nil {
 		a.rec.Stop() // wipes the loop
 	}
@@ -149,88 +208,100 @@ func main() {
 // build creates the controls.
 func (a *app) build() {
 	w := a.w
-	w.Title(appName, 28, 20, 430, 42)
-	w.Label("A rolling loop. One shortcut. The last five minutes.", 29, 67, 700, 26)
-	w.Section("01  Replay", 0, 28, 112, 347, 40)
-	w.Section("02  Settings", 1, 385, 112, 347, 40)
-	a.foot = w.Quiet(ready, 28, 542, 704, 26)
+	w.Grip(100)
+	w.Frame()
+	w.Title(appName, 32, 24, 400, 40)
+	w.Quiet("A rolling loop. One shortcut. The last five minutes.", 33, 66, 600, 22)
+	w.Strip(32, 104, 696, 44)
+	w.Section("01  Replay", 0, 36, 108, 342, 36)
+	w.Section("02  Settings", 1, 382, 108, 342, 36)
+	w.Rule(32, 584, 696)
+	a.foot = w.Quiet(ready, 32, 594, 696, 24)
 
 	// 01  Replay
 	w.Page(0)
-	w.Heading("Save what just happened", 28, 177, 700, 30)
-	w.Label("The screen is recorded into memory, and anything older than the length you chose is forgotten. Nothing is written to disk until you save.", 28, 213, 704, 44)
-	w.Label("Status", 28, 270, 110, 26)
-	a.status = w.Line("Starting...", 143, 270, 589, 26)
-	w.Label("Encoder", 28, 302, 110, 26)
-	a.encoder = w.Line("", 143, 302, 589, 26)
-	w.Label("In the loop", 28, 334, 110, 26)
-	a.held = w.Line("", 143, 334, 589, 26)
-	a.bar = w.Bar(143, 366, 589, 12)
-	w.Label("Sound", 28, 392, 110, 26)
-	a.sound = w.Line("", 143, 392, 589, 26)
-	w.Label("Last clip", 28, 429, 110, 26)
-	a.clip = w.Edit("", 143, 424, 447, 32)
-	a.show = w.Button("Show in folder", 602, 423, 130, 34, func() {
+	w.Heading("Save what just happened", 32, 168, 696, 30)
+	w.Label("While it records, the screen is kept in memory and anything older than the length you chose is forgotten. Nothing is written to disk until you save.", 32, 202, 696, 44)
+	w.Panel(32, 256, 696, 212)
+	w.Caption("Status", 52, 268, 110, 28)
+	a.light = w.Light(172, 268, 12, 28)
+	a.status = w.Line("", 194, 268, 514, 28)
+	w.Caption("Encoder", 52, 300, 110, 28)
+	a.encoder = w.Line("", 172, 300, 536, 28)
+	w.Caption("In the loop", 52, 332, 110, 28)
+	a.held = w.Line("", 172, 332, 536, 28)
+	a.bar = w.Bar(172, 364, 536, 6)
+	w.Caption("Sound", 52, 380, 110, 28)
+	a.sound = w.Line("", 172, 380, 536, 28)
+	w.Caption("Last clip", 52, 420, 110, 34)
+	a.clip = w.Path("Nothing saved yet", 172, 420, 392, 34)
+	w.Button("Show in folder", 574, 420, 134, 34, func() {
 		if _, err := os.Stat(a.lastClip); a.lastClip != "" && err == nil {
 			w.Reveal(a.lastClip)
 		} else {
 			a.openFolder()
 		}
 	})
-	a.keys = w.Quiet("", 28, 466, 704, 24)
-	a.pause = w.Button("Pause recording", 176, 498, 272, 36, a.togglePause)
-	a.save = w.Button("Save the last 5 minutes", 460, 498, 272, 36, a.saveClip)
+	a.keys = w.Quiet("", 32, 484, 696, 24)
+	a.toggle = w.Button("Start recording", 286, 520, 208, 40, a.flip)
+	a.save = w.Button("Save the last 5 minutes", 506, 520, 222, 40, a.saveClip)
 
 	// 02  Settings
 	w.Page(1)
-	w.Heading("Choose what is kept", 28, 177, 700, 30)
-	w.Label("Changes take effect at once. Changing the length, the picture, the screen or the sound starts the loop afresh, so save anything you want to keep first.", 28, 213, 704, 44)
-	w.Label("Keep the last", 28, 270, 130, 26)
-	a.length = w.Choice(lengthNames, 163, 266, 200, a.changed)
-	a.memory = w.Quiet("", 375, 270, 357, 24)
-	w.Label("Quality", 28, 308, 130, 26)
-	a.quality = w.Choice(qualityNames, 163, 304, 200, a.changed)
-	a.bitrate = w.Quiet("", 375, 308, 357, 24)
-	w.Label("Picture", 28, 346, 130, 26)
-	a.size = w.Choice(sizeNames, 163, 342, 200, a.changed)
-	a.rate = w.Choice(rateNames, 375, 342, 200, a.changed)
-	w.Label("Screen", 28, 384, 130, 26)
-	a.screen = w.Choice(nil, 163, 380, 412, a.changed)
-	w.Label("Shortcut", 28, 422, 130, 26)
-	a.hotkey = w.Shortcut(163, 418, 200, 30, a.shortcutChanged)
-	a.soundBox = w.Checkbox("Record what the computer plays", 375, 421, 357, 26, a.changed)
-	w.Label("Save clips to", 28, 460, 130, 26)
-	a.folder = w.Edit("", 163, 456, 427, 32)
-	w.Button("Change...", 602, 455, 130, 34, func() {
+	w.Heading("Choose what is kept", 32, 168, 696, 30)
+	w.Label("Changes take effect at once. While recording, changing the length, the picture, the screen or the sound starts the loop afresh, so save anything you want to keep first.", 32, 202, 696, 44)
+	w.Panel(32, 256, 696, 248)
+	w.Caption("Keep the last", 52, 268, 116, 34)
+	a.length = w.Choice(lengthNames, 172, 268, 200, 34, a.changed)
+	a.memory = w.Note("", 386, 268, 322, 34)
+	w.Caption("Quality", 52, 306, 116, 34)
+	a.quality = w.Choice(qualityNames, 172, 306, 200, 34, a.changed)
+	a.bitrate = w.Note("", 386, 306, 322, 34)
+	w.Caption("Picture", 52, 344, 116, 34)
+	a.size = w.Choice(sizeNames, 172, 344, 200, 34, a.changed)
+	a.rate = w.Choice(rateNames, 386, 344, 200, 34, a.changed)
+	w.Caption("Screen", 52, 382, 116, 34)
+	a.screen = w.Choice(nil, 172, 382, 414, 34, a.changed)
+	w.Caption("Shortcut", 52, 420, 116, 34)
+	a.hotkey = w.Shortcut(172, 420, 200, 34, a.shortcutChanged)
+	a.taken = w.Note("", 386, 420, 322, 34)
+	w.Caption("Save clips to", 52, 458, 116, 34)
+	a.folder = w.Path("", 172, 458, 392, 34)
+	w.Button("Change...", 574, 458, 134, 34, func() {
 		folder, err := w.FolderDialog("Choose where clips are saved")
 		if err != nil {
-			w.Alert("Choose a folder", err.Error())
+			a.say(sentence(err))
 		} else if folder != "" {
 			a.settings.Folder = folder
 			a.store()
-			w.SetPath(a.folder, folder)
+			a.folder.SetText(folder)
 		}
 	})
-	a.chimeBox = w.Checkbox("Play a sound when a clip is saved", 163, 500, 280, 26, func() {
-		a.settings.Chime = w.Checked(a.chimeBox)
+	a.soundBox = w.Switch("Record what the computer plays", 52, 516, 320, 26, a.changed)
+	a.chimeBox = w.Switch("Play a sound when a clip is saved", 52, 548, 320, 26, func() {
+		a.settings.Chime = a.chimeBox.On()
 		a.store()
 	})
-	a.startBox = w.Checkbox("Start with Windows", 452, 500, 280, 26, a.startChanged)
+	a.startBox = w.Switch("Start with Windows", 386, 516, 322, 26, a.startChanged)
+	a.recordBox = w.Switch("Start recording when LazaReplay opens", 386, 548, 322, 26, func() {
+		a.settings.Record = a.recordBox.On()
+		a.store()
+	})
 }
 
 // fill sets the controls from the settings.
 func (a *app) fill() {
-	w, s := a.w, a.settings
-	w.Choose(a.length, index(settings.Lengths, s.Seconds))
-	w.Choose(a.quality, s.Quality)
-	w.Choose(a.size, index(settings.Heights, s.Height))
-	w.Choose(a.rate, index(settings.Rates, s.Rate))
-	w.SetShortcutKeys(a.hotkey, s.Key, s.Modifiers)
-	w.Check(a.soundBox, s.Sound)
-	w.Check(a.chimeBox, s.Chime)
-	w.Check(a.startBox, autostart.Command(appName) != "")
-	w.SetPath(a.folder, a.clipFolder())
-	w.SetText(a.save, "Save the last "+lengthNames[index(settings.Lengths, s.Seconds)])
+	s := a.settings
+	a.length.Choose(index(settings.Lengths, s.Seconds))
+	a.quality.Choose(s.Quality)
+	a.size.Choose(index(settings.Heights, s.Height))
+	a.rate.Choose(index(settings.Rates, s.Rate))
+	a.hotkey.SetKeys(s.Key, s.Modifiers)
+	a.soundBox.Turn(s.Sound)
+	a.chimeBox.Turn(s.Chime)
+	a.startBox.Turn(autostart.Command(appName+profile()) != "")
+	a.recordBox.Turn(s.Record)
+	a.folder.SetText(a.clipFolder())
 	a.listScreens()
 	a.notes()
 }
@@ -244,6 +315,8 @@ func index(list []int, value int) int {
 	return 0
 }
 
+func (a *app) lengthName() string { return lengthNames[index(settings.Lengths, a.settings.Seconds)] }
+
 // listScreens fills the list of screens with those connected now.
 func (a *app) listScreens() {
 	a.monitors = recorder.Monitors()
@@ -255,8 +328,8 @@ func (a *app) listScreens() {
 			chosen = i
 		}
 	}
-	a.w.SetEntries(a.screen, names)
-	a.w.Choose(a.screen, chosen)
+	a.screen.SetEntries(names)
+	a.screen.Choose(chosen)
 }
 
 // screenName names a screen the way a person would.
@@ -276,20 +349,18 @@ func screenName(monitors []recorder.Monitor, name string, capital bool) string {
 
 // changed runs when a choice that affects recording is made.
 func (a *app) changed() {
-	w, s := a.w, &a.settings
-	s.Seconds = settings.Lengths[max(w.Chosen(a.length), 0)]
-	s.Quality = max(w.Chosen(a.quality), 0)
-	s.Height = settings.Heights[max(w.Chosen(a.size), 0)]
-	s.Rate = settings.Rates[max(w.Chosen(a.rate), 0)]
-	s.Sound = w.Checked(a.soundBox)
+	s := &a.settings
+	s.Seconds = settings.Lengths[max(a.length.Chosen(), 0)]
+	s.Quality = max(a.quality.Chosen(), 0)
+	s.Height = settings.Heights[max(a.size.Chosen(), 0)]
+	s.Rate = settings.Rates[max(a.rate.Chosen(), 0)]
+	s.Sound = a.soundBox.On()
 	s.Monitor = ""
-	if i := w.Chosen(a.screen); i >= 0 && i < len(a.monitors) && !a.monitors[i].Main {
+	if i := a.screen.Chosen(); i >= 0 && i < len(a.monitors) && !a.monitors[i].Main {
 		s.Monitor = a.monitors[i].Name
 	}
 	a.store()
-	w.SetText(a.save, "Save the last "+lengthNames[index(settings.Lengths, s.Seconds)])
 	a.notes()
-	w.SetTray(a.icon(), a.tip())
 	a.restart()
 }
 
@@ -303,8 +374,8 @@ func (a *app) notes() {
 		}
 	}
 	w, h := o.Size(width, height)
-	a.w.SetText(a.memory, fmt.Sprintf("Uses up to about %s of memory", megabytes(int64(o.Memory(width, height)))))
-	a.w.SetText(a.bitrate, fmt.Sprintf("%d by %d at about %.0f megabits a second", w, h, float64(o.Bitrate(w, h, o.Rate))/1e6))
+	a.memory.SetText(fmt.Sprintf("Uses up to about %s of memory", megabytes(int64(o.Memory(width, height)))))
+	a.bitrate.SetText(fmt.Sprintf("%d by %d at about %.0f megabits a second", w, h, float64(o.Bitrate(w, h, o.Rate))/1e6))
 }
 
 func (a *app) store() {
@@ -321,133 +392,201 @@ func (a *app) options() recorder.Options {
 	}
 }
 
-// restart stops the recorder, if one is running, and starts another with
-// the current settings. Both happen off the window's thread so the window
-// never waits for the graphics driver.
+// restart stops the recorder, if one is running, and, when the user has
+// recording switched on, starts another with the current settings. Both
+// happen off the window's thread so the window never waits for the
+// graphics driver.
 func (a *app) restart() {
 	old := a.rec
 	a.rec = nil
 	a.generation++
-	generation, paused, options := a.generation, a.paused, a.options()
-	go func() {
-		if old != nil {
-			old.Stop()
-		}
-		if paused {
-			return
-		}
-		fresh := recorder.Start(options)
-		a.w.Post(func() {
-			if generation != a.generation {
-				go fresh.Stop() // overtaken by a later change
+	generation, recording, options := a.generation, a.recording, a.options()
+	if old != nil || recording {
+		go func() {
+			if old != nil {
+				old.Stop() // wipes the loop
+			}
+			if !recording {
 				return
 			}
-			a.rec = fresh
-			a.refresh()
-		})
-	}()
+			fresh := recorder.Start(options)
+			a.w.Post(func() {
+				if generation != a.generation {
+					go fresh.Stop() // overtaken by a later change
+					return
+				}
+				a.rec = fresh
+				a.refresh()
+			})
+		}()
+	}
 	a.refresh()
 }
 
-func (a *app) togglePause() {
-	a.paused = !a.paused
-	if a.paused {
-		a.w.SetText(a.pause, "Resume recording")
-		a.say("Paused. The loop was wiped from memory.")
+// start begins recording into an empty loop.
+func (a *app) start() {
+	if !a.recording {
+		a.recording = true
+		a.say("Recording. Nothing is written to disk until you save.")
+		a.restart()
+	}
+}
+
+// stop ends recording and wipes the loop.
+func (a *app) stop() {
+	if a.recording {
+		a.recording = false
+		a.say("Stopped. The loop was wiped from memory.")
+		a.restart()
+	}
+}
+
+// flip is the button that starts recording, or stops it.
+func (a *app) flip() {
+	if a.recording {
+		a.stop()
 	} else {
-		a.w.SetText(a.pause, "Pause recording")
-		a.say(ready)
+		a.start()
 	}
-	a.w.SetTray(a.icon(), a.tip())
-	a.restart()
-}
-
-func (a *app) icon() int {
-	if a.paused {
-		return iconPaused
-	}
-	return iconRecording
-}
-
-// tip is the text shown when the mouse rests on the notification area icon.
-func (a *app) tip() string {
-	if a.paused {
-		return "LazaReplay: paused, not recording"
-	}
-	return "LazaReplay: keeping the last " + lengthNames[index(settings.Lengths, a.settings.Seconds)] + " of the screen"
 }
 
 // menu is shown on a right click of the notification area icon.
 func (a *app) menu() []winui.MenuEntry {
-	pause := "Pause recording"
-	if a.paused {
-		pause = "Resume recording"
+	flip := "Start recording"
+	if a.recording {
+		flip = "Stop recording"
 	}
 	return []winui.MenuEntry{
-		{Text: "Save the last " + lengthNames[index(settings.Lengths, a.settings.Seconds)], Action: a.saveClip, Greyed: a.paused || a.saving},
+		{Text: flip, Action: a.flip},
+		{Text: "Save the last " + a.lengthName(), Action: a.saveClip, Greyed: !a.recording || a.saving},
+		{},
 		{Text: "Open LazaReplay", Action: a.w.Show},
 		{Text: "Open the clips folder", Action: a.openFolder},
-		{},
-		{Text: pause, Action: a.togglePause},
 		{},
 		{Text: "Exit", Action: a.exit},
 	}
 }
 
-// refresh shows the state of the recorder.
-func (a *app) refresh() {
-	w := a.w
-	var s recorder.Status
-	if a.rec != nil {
-		s = a.rec.Status()
+// face is everything the window and the icon by the clock say about the
+// state of the recorder. It is worked out apart from the window, so that
+// what each state shows can be tested.
+type face struct {
+	Status, Encoder, Held, Sound string
+	Hint                         string // the line above the buttons
+	Level                        float64
+	Light                        winui.Tone
+	Flip                         string // the button that starts and stops
+	CanSave                      bool
+	Icon                         int // by the clock
+	Tip                          string
+}
+
+// look works out what to show. recording is whether the user has recording
+// switched on, running whether a recorder exists yet, and trouble why the
+// shortcut does not work, if it does not.
+func look(s settings.Settings, monitors []recorder.Monitor, recording, running, saving bool, r recorder.Status, trouble string) face {
+	length := lengthNames[index(settings.Lengths, s.Seconds)]
+	if !recording {
+		f := face{
+			Status:  "Not recording. Nothing is kept until you press Start recording.",
+			Encoder: "Chosen when recording starts",
+			Held:    "Empty",
+			Sound:   "Off",
+			Hint:    "Opening LazaReplay records nothing. Press Start recording when you want the loop to run.",
+			Flip:    "Start recording",
+			Icon:    iconIdle,
+			Tip:     "LazaReplay: not recording",
+		}
+		if s.Sound {
+			f.Sound = "Recorded once recording starts"
+		}
+		return f
 	}
-	window := time.Duration(a.settings.Seconds) * time.Second
-	status, encoder, sound := "Starting...", "", "Off"
+	window := time.Duration(s.Seconds) * time.Second
+	f := face{
+		Status:  "Starting...",
+		Held:    fmt.Sprintf("%s of %s, %s in memory", span(r.Length), span(window), megabytes(int64(r.Bytes))),
+		Sound:   "Off",
+		Level:   r.Length.Seconds() / window.Seconds(),
+		Light:   winui.Waiting,
+		Flip:    "Stop recording",
+		CanSave: running && !saving,
+		Icon:    iconRecording,
+		Tip:     "LazaReplay: keeping the last " + length + " of the screen",
+	}
 	switch {
-	case a.paused:
-		status = "Paused. Nothing is being recorded and the loop is empty."
-	case a.rec == nil || s.State == recorder.Starting:
-	case s.State == recorder.Recording:
-		status = fmt.Sprintf("Recording %s at %d by %d, %d pictures a second", screenName(a.monitors, s.Screen, false), s.Width, s.Height, s.Rate)
-		if s.Rotated {
-			status = "Recording a turned screen on its side, without the pointer"
+	case !running || r.State == recorder.Starting:
+	case r.State == recorder.Recording:
+		f.Light = winui.Live
+		f.Status = fmt.Sprintf("Recording %s at %d by %d, %d pictures a second", screenName(monitors, r.Screen, false), r.Width, r.Height, r.Rate)
+		if r.Rotated {
+			f.Status = "Recording a turned screen on its side, without the pointer"
 		}
 	default:
-		status = s.Problem
+		f.Status = r.Problem
 	}
-	if s.Encoder != "" {
-		encoder = strings.TrimSuffix(strings.ReplaceAll(s.Encoder, "®", ""), " MFT")
-		if s.Hardware {
-			encoder += ", on the graphics chip"
+	if r.Encoder != "" {
+		f.Encoder = strings.TrimSuffix(strings.ReplaceAll(r.Encoder, "®", ""), " MFT")
+		if r.Hardware {
+			f.Encoder += ", on the graphics chip"
 		} else {
-			encoder = "Windows software encoder, on the processor, kept light at 720p"
+			f.Encoder = "Windows software encoder, on the processor, kept light at 720p"
 		}
 	}
 	switch {
-	case !a.settings.Sound || a.paused:
-	case s.Sound:
-		sound = "Recording what the computer plays"
-	case s.Silent != "":
-		sound = s.Silent
+	case !s.Sound:
+	case r.Sound:
+		f.Sound = "Recording what the computer plays"
+	case r.Silent != "":
+		f.Sound = r.Silent
 	default:
-		sound = "Starting..."
+		f.Sound = "Starting..."
 	}
-	w.SetText(a.status, status)
-	w.SetText(a.encoder, encoder)
-	w.SetText(a.sound, sound)
-	w.SetText(a.held, fmt.Sprintf("%s of %s, %s in memory", span(s.Length), span(window), megabytes(int64(s.Bytes))))
-	a.bar.Set(s.Length.Seconds() / window.Seconds())
-	keys := "No shortcut is set. Choose one in Settings to save from any program."
+	switch {
+	case trouble != "":
+		f.Hint = trouble
+	case s.Key != 0:
+		f.Hint = "Press " + winui.ShortcutName(s.Key, s.Modifiers) + " in any program, or in a game, to save."
+	default:
+		f.Hint = "No shortcut is set. Choose one in Settings to save from any program."
+	}
+	return f
+}
+
+// refresh shows the state of the recorder, in the window and by the clock.
+func (a *app) refresh() {
+	var status recorder.Status
+	if a.rec != nil {
+		status = a.rec.Status()
+	}
+	f := look(a.settings, a.monitors, a.recording, a.rec != nil, a.saving, status, a.shortcut)
+	a.status.SetText(f.Status)
+	a.light.Show(f.Light)
+	a.encoder.SetText(f.Encoder)
+	a.held.SetText(f.Held)
+	a.bar.SetLevel(f.Level)
+	a.sound.SetText(f.Sound)
+	a.keys.SetText(f.Hint)
+	// The button for the thing to do next is the light one: Start while
+	// nothing is recorded, Save once something is.
+	a.toggle.SetText(f.Flip)
+	a.toggle.Lead(!a.recording)
+	a.save.SetText("Save the last " + a.lengthName())
+	a.save.Lead(a.recording)
+	a.save.Enable(f.CanSave)
 	if a.shortcut != "" {
-		keys = a.shortcut
-	} else if a.settings.Key != 0 {
-		keys = "Press " + shortcutName(a.settings.Key, a.settings.Modifiers) + " in any program, or in a game, to save."
+		a.taken.SetText("Taken by another program. Choose another.")
+	} else {
+		a.taken.SetText("Click the box, then press the keys")
 	}
-	w.SetText(a.keys, keys)
+	if f.Icon != a.icon || f.Tip != a.tip {
+		a.icon, a.tip = f.Icon, f.Tip
+		a.w.SetTray(f.Icon, f.Tip)
+	}
 }
 
 // say puts a message on the line at the foot of the window.
-func (a *app) say(text string) { a.w.SetText(a.foot, text) }
+func (a *app) say(text string) { a.foot.SetText(text) }
 
 // clipFolder returns where clips are saved.
 func (a *app) clipFolder() string {
@@ -462,43 +601,54 @@ func (a *app) clipFolder() string {
 	return filepath.Join(videos, appName)
 }
 
+// refuse says why no clip was saved: on the line at the foot, with a sound
+// that is not the one for a saved clip, and by the clock when the window is
+// not on show. The shortcut is pressed from inside other programs, where
+// silence would leave the user guessing.
+func (a *app) refuse(title, text string) {
+	a.say(text)
+	if a.settings.Chime {
+		a.w.Warn()
+	}
+	if !a.w.Visible() {
+		a.w.Notify(title, text)
+	}
+}
+
 // saveClip writes the loop to a new file. It is called by the button, the
-// shortcut and the notification area menu.
+// shortcut, the notification area menu and the --save switch.
 func (a *app) saveClip() {
 	if a.saving {
 		return
 	}
+	if !a.recording {
+		a.refuse("Nothing to save", "LazaReplay is not recording, so there is nothing to save. Press Start recording first.")
+		return
+	}
 	rec := a.rec
 	if rec == nil {
-		if a.paused {
-			a.say("Recording is paused, so there is nothing to save.")
-		} else {
-			a.say("The recorder is still starting. Try again in a moment.")
-		}
+		a.refuse("Nothing to save yet", "The recorder is still starting. Try again in a moment.")
 		return
 	}
 	path := unused(filepath.Join(a.clipFolder(), "Replay "+time.Now().Format("2006-01-02 15.04.05")+".mp4"))
 	a.saving = true
-	a.w.Enable(a.save, false)
 	a.say("Saving...")
+	a.refresh()
 	go func() {
 		clip, err := rec.Save(path)
 		a.w.Post(func() {
 			a.saving = false
-			a.w.Enable(a.save, true)
+			a.refresh()
 			if a.leaving {
 				a.w.Close()
 				return
 			}
 			if err != nil {
-				a.say("Not saved. " + sentence(err))
-				if !a.w.Visible() {
-					a.w.Notify("The clip was not saved", sentence(err))
-				}
+				a.refuse("The clip was not saved", "Not saved. "+sentence(err))
 				return
 			}
 			a.lastClip = clip.Path
-			a.w.SetPath(a.clip, clip.Path)
+			a.clip.SetText(clip.Path)
 			text := fmt.Sprintf("Saved %s (%s, %s).", filepath.Base(clip.Path), span(clip.Length), megabytes(clip.Bytes))
 			a.say(text)
 			if a.settings.Chime {
@@ -525,11 +675,13 @@ func (a *app) exit() {
 // the first time.
 func (a *app) openFolder() {
 	folder := a.clipFolder()
-	if err := os.MkdirAll(folder, 0755); err != nil {
-		a.say(sentence(err))
-		return
+	err := os.MkdirAll(folder, 0755)
+	if err == nil {
+		err = a.w.OpenFolder(folder)
 	}
-	a.w.OpenFolder(folder)
+	if err != nil {
+		a.say(sentence(err))
+	}
 }
 
 // unused returns the path, or the path with a number added when a file of
@@ -546,7 +698,7 @@ func unused(path string) string {
 }
 
 func (a *app) shortcutChanged() {
-	a.settings.Key, a.settings.Modifiers = a.w.ShortcutKeys(a.hotkey)
+	a.settings.Key, a.settings.Modifiers = a.hotkey.Keys()
 	a.store()
 	a.applyShortcut()
 	a.refresh()
@@ -556,38 +708,26 @@ func (a *app) shortcutChanged() {
 func (a *app) applyShortcut() {
 	a.shortcut = ""
 	if err := a.w.SetHotkey(1, a.settings.Key, a.settings.Modifiers); err != nil {
-		a.shortcut = shortcutName(a.settings.Key, a.settings.Modifiers) + " is taken by another program. Choose another shortcut in Settings."
+		a.shortcut = winui.ShortcutName(a.settings.Key, a.settings.Modifiers) + " is taken by another program. Choose another shortcut in Settings."
 	}
 }
 
-// shortcutName writes a key combination out, such as Ctrl + Shift + F9.
-func shortcutName(key, modifiers uint32) string {
-	var parts []string
-	if modifiers&winui.Ctrl != 0 {
-		parts = append(parts, "Ctrl")
-	}
-	if modifiers&winui.Shift != 0 {
-		parts = append(parts, "Shift")
-	}
-	if modifiers&winui.Alt != 0 {
-		parts = append(parts, "Alt")
-	}
-	return strings.Join(append(parts, winui.KeyName(key)), " + ")
-}
-
+// startChanged adds the program to the list Windows starts at sign-in, or
+// takes it off. Started that way it has no window, and it records only if
+// the user has also asked for that.
 func (a *app) startChanged() {
 	var err error
-	if a.w.Checked(a.startBox) {
+	if a.startBox.On() {
 		var program string
 		if program, err = os.Executable(); err == nil {
-			err = autostart.Enable(appName, `"`+program+`" --tray`)
+			err = autostart.Enable(appName+profile(), `"`+program+`" --tray`)
 		}
 	} else {
-		err = autostart.Disable(appName)
+		err = autostart.Disable(appName + profile())
 	}
 	if err != nil {
 		a.say(sentence(err))
-		a.w.Check(a.startBox, autostart.Command(appName) != "")
+		a.startBox.Turn(autostart.Command(appName+profile()) != "")
 	}
 }
 

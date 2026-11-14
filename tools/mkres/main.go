@@ -47,12 +47,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Two icons: the program's own, shown while recording, and a second
-	// without the dot, shown by the clock while recording is paused.
-	images := make([][]byte, 2*len(sizes))
+	// Three icons. The first is the program's own. The other two are shown
+	// by the clock: the ring alone while nothing is recorded, and the ring
+	// with a red light while recording.
+	white, red := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0x54, 0x49, 0xFF}
+	images := make([][]byte, 3*len(sizes))
 	for i, size := range sizes {
-		images[i] = encode(draw(size, true))
-		images[len(sizes)+i] = encode(draw(size, false))
+		images[i] = encode(draw(size, white, 9))
+		images[len(sizes)+i] = encode(draw(size, white, 0))
+		// At the small sizes shown by the clock the red light is drawn
+		// larger, or its colour would be lost in a dot three pixels across.
+		radius := 9.0
+		if size <= 24 {
+			radius = 13
+		}
+		images[2*len(sizes)+i] = encode(draw(size, red, radius))
 	}
 	if err := os.WriteFile(iconPath, icon(images[:len(sizes)]), 0644); err != nil {
 		return err
@@ -77,15 +86,16 @@ func distance(x, y, left, top, width, height, radius float64) float64 {
 }
 
 // draw renders the icon on a 96-unit grid: a dark rounded tile holding a
-// ring, the loop, with a small solid dot lifted off it, the recording
-// light. With dot false the light is left out.
-func draw(size int, dot bool) *image.NRGBA {
+// white ring, the loop, with a solid dot lifted off it, the recording
+// light, in the colour and of the radius given. With a radius of zero the
+// light is left out.
+func draw(size int, light color.NRGBA, radius float64) *image.NRGBA {
 	const samples = 6
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
 	unit := 96 / float64(size)
 	for py := 0; py < size; py++ {
 		for px := 0; px < size; px++ {
-			tile, mark := 0, 0
+			tile, ring, lamp := 0, 0, 0
 			for sy := 0; sy < samples; sy++ {
 				for sx := 0; sx < samples; sx++ {
 					x := (float64(px) + (float64(sx)+0.5)/samples) * unit
@@ -94,19 +104,23 @@ func draw(size int, dot bool) *image.NRGBA {
 						continue
 					}
 					tile++
-					ring := math.Abs(math.Hypot(x-44, y-54)-21) <= 3
-					light := dot && math.Hypot(x-73, y-24) <= 9
-					if ring || light {
-						mark++
+					switch {
+					case radius > 0 && math.Hypot(x-73, y-24) <= radius:
+						lamp++
+					case math.Abs(math.Hypot(x-44, y-54)-21) <= 3:
+						ring++
 					}
 				}
 			}
 			if tile == 0 {
 				continue
 			}
-			white := float64(mark) / float64(tile)
-			shade := uint8(math.Round(0x15 + (0xFF-0x15)*white))
-			img.SetNRGBA(px, py, color.NRGBA{shade, shade, shade, uint8(math.Round(255 * float64(tile) / (samples * samples)))})
+			// Each pixel is a mix of the dark tile, the white ring and the light.
+			mix := func(lit uint8) uint8 {
+				rest := float64(tile - ring - lamp)
+				return uint8(math.Round((rest*0x15 + float64(ring)*0xFF + float64(lamp)*float64(lit)) / float64(tile)))
+			}
+			img.SetNRGBA(px, py, color.NRGBA{mix(light.R), mix(light.G), mix(light.B), uint8(math.Round(255 * float64(tile) / (samples * samples)))})
 		}
 	}
 	return img

@@ -8,7 +8,7 @@ import (
 
 func TestRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "settings.json")
-	want := Settings{Seconds: 120, Quality: 2, Height: 0, Rate: 30, Monitor: `\\.\DISPLAY2`, Sound: false, Folder: `D:\Clips`, Key: 0x7A, Modifiers: 1 | 2, Chime: false}
+	want := Settings{Seconds: 120, Quality: 2, Height: 0, Rate: 30, Monitor: `\\.\DISPLAY2`, Sound: false, Folder: `D:\Clips`, Key: 0x7A, Modifiers: 1 | 2, Chime: false, Record: true}
 	if err := want.SaveTo(path); err != nil {
 		t.Fatal(err)
 	}
@@ -65,5 +65,28 @@ func TestMissingFieldsKeepTheirDefaults(t *testing.T) {
 	want.Seconds = 60
 	if got := LoadFrom(path); got != want {
 		t.Fatalf("got  %+v\nwant %+v", got, want)
+	}
+}
+
+func TestRecordingDoesNotStartByItself(t *testing.T) {
+	if Default().Record {
+		t.Fatal("a first run must not record until the user starts it")
+	}
+	// A settings file written by version 1.0.0, which always recorded, has
+	// no such choice in it. It must not turn recording on.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	old := `{"seconds": 300, "quality": 1, "height": 1080, "rate": 60, "monitor": "", "sound": true, "folder": "", "key": 120, "modifiers": 6, "chime": true}`
+	if err := os.WriteFile(path, []byte(old), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if LoadFrom(path).Record {
+		t.Fatal("an older settings file turned recording on")
+	}
+	// Only the user asking for it does.
+	if err := os.WriteFile(path, []byte(`{"record": true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !LoadFrom(path).Record {
+		t.Fatal("the choice to record on opening was not kept")
 	}
 }

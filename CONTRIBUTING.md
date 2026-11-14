@@ -22,7 +22,9 @@ Tests that run on any platform:
 go test ./internal/...
 ```
 
-They cover the loop, the MP4 writer, the H.264 reader, the sound timeline, the pointer layers, the picture fitting and the settings. Format Go changes with `gofmt`.
+They cover the loop, the MP4 writer, the H.264 reader, the sound timeline, the pointer layers, the picture fitting, the settings, and the window's drawing code, colours and key rules. Format Go changes with `gofmt`.
+
+The tests that need Windows cover what each state of the app shows, the command line, and how the window's controls answer the keyboard and the pointer. They run with `go test ./...` on Windows.
 
 On Windows, run `build.cmd` before submitting a change. It regenerates the resources, runs `go vet` and all the tests, and builds both programs. Then run the self-check, which is the test of everything that needs a graphics chip:
 
@@ -36,7 +38,8 @@ The self-check has other modes that exercise one stage at a time. `lazareplay-ch
 | --- | --- |
 | `LAZAREPLAY_PROFILE` | Any value makes `record` print where the capture thread spends its time |
 | `LAZAREPLAY_FAULT` | A number makes a hardware encoder report a failure after that many pictures, to exercise the fallback to the next encoder |
-| `LAZAREPLAY_SETTINGS` | The path of a settings file to use in place of the one in your application data folder, so that testing the app leaves your own settings alone |
+| `LAZAREPLAY_SETTINGS` | The path of a settings file to use in place of the one in your application data folder, so that testing the app leaves your own settings alone. A copy started this way also counts as a different program from the copy in daily use: both can run at once, and the command-line switches reach the one started with the same variable |
+| `LAZAREPLAY_SCALE` | A percentage, such as `150`, draws the window at that scale, to check the layout without changing the display settings of Windows |
 
 `record` also takes `lose=90`, which makes the generated source fail every 90 pictures the way a monitor does when Windows takes it away, and `processor=1`, which converts with the chip's video processor in place of drawing.
 
@@ -51,7 +54,8 @@ The self-check has other modes that exercise one stage at a time. `lazareplay-ch
 | `internal/ring`, `internal/h264`, `internal/mp4` | The loop, the H.264 stream reader and the MP4 writer |
 | `internal/recorder` | Ties the stages together; chooses the encoder; saves clips |
 | `internal/testcard` | The picture the self-check records |
-| `internal/winui`, `cmd/lazareplay` | The native Windows interface and the app |
+| `internal/winui` | The window: the drawing code, the controls, the icon by the clock and its menu |
+| `cmd/lazareplay` | The app: what each state shows, starting and stopping, saving, the command line |
 | `cmd/lazareplay-check` | The self-check |
 | `tools/mkres` | Draws the icon and builds the Windows resource object |
 
@@ -64,6 +68,9 @@ The self-check has other modes that exercise one stage at a time. `lazareplay-ch
 - Every structure that mirrors a Windows or driver structure says which one in its comment, and its layout is taken from the published header, not from memory.
 - A pointer converted to `uintptr` for a call is converted in the argument list of that call, never stored first. `com.Call` and the encoder calls rely on this to keep the memory alive and in place.
 - Recording is always visible. Do not add a way to run without the icon by the clock.
+- Nothing is recorded until the user starts it. Anything that starts recording by itself has to be a choice the user made, off by default.
+- The window is redrawn only where something changed, and never while it is hidden. Do not add an animation or a timer that repaints.
+- Every colour of text has to stay readable over a white screen and a black one. `internal/winui/theme_test.go` measures it; add new colours to that test.
 - Anything that changes what a clip contains needs a check in the self-check that would catch it being wrong.
 
 To regenerate the icon and resources after changing the design, the manifest or `VERSION`:

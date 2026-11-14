@@ -30,6 +30,7 @@ $files = @(
     @('docs/USAGE.md'),
     @('docs/HOW-IT-WORKS.md'),
     @("docs/releases/v$version.md"),
+    @('docs/screenshots/stopped.png'),
     @('docs/screenshots/replay.png'),
     @('docs/screenshots/settings.png'),
     @('assets/logo.svg')
